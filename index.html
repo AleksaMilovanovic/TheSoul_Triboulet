@@ -457,6 +457,28 @@
     // Nothing is assumed bought; the offered voucher for each ante is rolled against
     // what you have actually marked as owned before that ante.
     var voucherPurchases = {};
+    // Extra packs revealed per ante (ante -> count beyond the game's default 4/6).
+    var extraPacks = {};
+    window.packState = {
+      extra: extraPacks,
+      more: function(ante) { extraPacks[ante] = (extraPacks[ante] || 0) + 1; performAnalysis(); },
+      reset: function(ante) { delete extraPacks[ante]; performAnalysis(); }
+    };
+    // Extra tags revealed per ante (ante -> count beyond the game's default 2).
+    var extraTags = {};
+    window.tagState = {
+      extra: extraTags,
+      more: function(ante) { extraTags[ante] = (extraTags[ante] || 0) + 1; performAnalysis(); },
+      reset: function(ante) { delete extraTags[ante]; performAnalysis(); }
+    };
+    // Extra Sixth Sense rounds revealed per ante (ante -> extra sets of 3, for
+    // replaying an ante after Hieroglyph/Petroglyph).
+    var extraSixth = {};
+    window.sixthState = {
+      extra: extraSixth,
+      more: function(ante) { extraSixth[ante] = (extraSixth[ante] || 0) + 1; performAnalysis(); },
+      reset: function(ante) { delete extraSixth[ante]; performAnalysis(); }
+    };
     const DECK_VOUCHERS = {
       "Magic Deck": ["Crystal Ball"],
       "Nebula Deck": ["Telescope"],
@@ -543,6 +565,12 @@
       if (seedInput.value !== '') params.append('seed', seedInput.value);
       const purchaseList = Object.keys(voucherPurchases).map(n => n + ':' + voucherPurchases[n]).join(',');
       if (purchaseList !== '') params.append('vouchers', purchaseList);
+      const extraPackList = Object.keys(extraPacks).filter(a => extraPacks[a] > 0).map(a => a + ':' + extraPacks[a]).join(',');
+      if (extraPackList !== '') params.append('extraPacks', extraPackList);
+      const extraTagList = Object.keys(extraTags).filter(a => extraTags[a] > 0).map(a => a + ':' + extraTags[a]).join(',');
+      if (extraTagList !== '') params.append('extraTags', extraTagList);
+      const extraSixthList = Object.keys(extraSixth).filter(a => extraSixth[a] > 0).map(a => a + ':' + extraSixth[a]).join(',');
+      if (extraSixthList !== '') params.append('extraSixth', extraSixthList);
       if (base64Unlocks != '/////////x/4') params.append('unlocks', base64Unlocks);
 
       const url = `${baseUrl}?${params.toString()}`;
@@ -642,12 +670,16 @@
         output += "Voucher: " + inst.nextVoucher(a) + "\n";
         var ownedNow = Object.keys(voucherPurchases).filter(n => voucherPurchases[n] <= a);
         if (ownedNow.length > 0) output += "Owned Vouchers: " + ownedNow.join(", ") + "\n";
-        output += "Tags: " + inst.nextTag(a) + ", " + inst.nextTag(a) + "\n";
+        var tagList = [];
+        var numTags = 2 + (extraTags[a] || 0);
+        for (let t = 0; t < numTags; t++) tagList.push(inst.nextTag(a));
+        output += "Tags: " + tagList.join(", ") + "\n";
 
         // Sixth Sense: one Spectral per round (3 rounds per ante). Uses the
         // game's "sixth" source key, so it doesn't disturb any other RNG stream.
         var sixthSense = [];
-        for (let r = 0; r < 3; r++) {
+        var numSixth = 3 * (1 + (extraSixth[a] || 0));
+        for (let r = 0; r < numSixth; r++) {
           sixthSense.push(inst.nextSpectral("sixth", a, false));
         }
         output += "Sixth Sense: " + sixthSense.join(", ") + "\n";
@@ -694,7 +726,7 @@
         }
 
         output += "\nPacks: \n";
-        var numPacks = (a == 1) ? 4 : 6;
+        var numPacks = ((a == 1) ? 4 : 6) + (extraPacks[a] || 0);
         for (let p = 1; p <= numPacks; p++) {
           var pack = inst.nextPack(a);
           output += pack + " - ";
@@ -797,6 +829,30 @@
       const urlEightBall = urlParams.get('eightBall');
       const urlEmperor = urlParams.get('emperor');
       const urlVouchers = urlParams.get('vouchers');
+      const urlExtraPacks = urlParams.get('extraPacks');
+      const urlExtraTags = urlParams.get('extraTags');
+      const urlExtraSixth = urlParams.get('extraSixth');
+
+      if (urlExtraSixth) {
+        urlExtraSixth.split(',').forEach(entry => {
+          const [a, n] = entry.split(':').map(x => parseInt(x, 10));
+          if (a >= 1 && n >= 1) extraSixth[a] = Math.min(n, 200);
+        });
+      }
+
+      if (urlExtraTags) {
+        urlExtraTags.split(',').forEach(entry => {
+          const [a, n] = entry.split(':').map(x => parseInt(x, 10));
+          if (a >= 1 && n >= 1) extraTags[a] = Math.min(n, 500);
+        });
+      }
+
+      if (urlExtraPacks) {
+        urlExtraPacks.split(',').forEach(entry => {
+          const [a, n] = entry.split(':').map(x => parseInt(x, 10));
+          if (a >= 1 && n >= 1) extraPacks[a] = Math.min(n, 500);
+        });
+      }
 
       if (urlVouchers) {
         urlVouchers.split(',').forEach(entry => {

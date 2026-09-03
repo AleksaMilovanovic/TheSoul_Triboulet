@@ -532,6 +532,18 @@ function searchAndHighlight() {
         cursor: pointer;
     }
 
+    .packControls {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 6px;
+    }
+
+    .smallButton {
+        font-size: 0.9em;
+        padding: 4px 10px;
+    }
+
     .voucherContainer.clickable:hover,
     .voucherTile.clickable:hover {
         background-color: #3a3a3a;
@@ -591,6 +603,13 @@ function searchAndHighlight() {
 
     .voucherTile.unavailable {
         opacity: 0.35;
+    }
+
+    /* Visual break between each set of 3 Sixth Sense rolls */
+    .sixthContainer.sixthSetStart {
+        border-left: 1px solid #666666;
+        padding-left: 8px;
+        margin-left: 4px;
     }
 
     .queueInfo {
@@ -1125,6 +1144,36 @@ function searchAndHighlight() {
             });
 
             tagsElement.appendChild(tagsContainer);
+
+            // Reveal tags beyond the game's default two, one at a time
+            const ts = window.tagState;
+            if (ts) {
+                const tagControls = document.createElement('div');
+                tagControls.className = 'packControls';
+
+                const moreBtn = document.createElement('button');
+                moreBtn.className = 'smallButton';
+                moreBtn.textContent = 'Reveal another tag';
+                moreBtn.addEventListener('click', () => ts.more(anteNum));
+                tagControls.appendChild(moreBtn);
+
+                const extra = ts.extra[anteNum] || 0;
+                if (extra > 0) {
+                    const extraNote = document.createElement('span');
+                    extraNote.className = 'modifier';
+                    extraNote.textContent = '+' + extra + ' extra';
+                    tagControls.appendChild(extraNote);
+
+                    const resetBtn = document.createElement('button');
+                    resetBtn.className = 'smallButton';
+                    resetBtn.textContent = 'Reset';
+                    resetBtn.addEventListener('click', () => ts.reset(anteNum));
+                    tagControls.appendChild(resetBtn);
+                }
+
+                tagsElement.appendChild(tagControls);
+            }
+
             queueInfo.appendChild(tagsElement);
 
             if (sixthSense.length > 0) {
@@ -1154,6 +1203,7 @@ function searchAndHighlight() {
 
                     const roundElement = document.createElement('div');
                     roundElement.textContent = 'Round ' + (idx + 1);
+                    if (idx % 3 === 0 && idx > 0) sixthContainer.classList.add('sixthSetStart');
                     roundElement.classList.add('modifier');
                     sixthContainer.appendChild(roundElement);
 
@@ -1161,6 +1211,36 @@ function searchAndHighlight() {
                 });
 
                 sixthElement.appendChild(sixthCardsContainer);
+
+                // Reveal another ante's worth (3) of Sixth Sense rolls
+                const ss = window.sixthState;
+                if (ss) {
+                    const sixthControls = document.createElement('div');
+                    sixthControls.className = 'packControls';
+
+                    const moreBtn = document.createElement('button');
+                    moreBtn.className = 'smallButton';
+                    moreBtn.textContent = 'Reveal 3 more';
+                    moreBtn.addEventListener('click', () => ss.more(anteNum));
+                    sixthControls.appendChild(moreBtn);
+
+                    const extra = ss.extra[anteNum] || 0;
+                    if (extra > 0) {
+                        const extraNote = document.createElement('span');
+                        extraNote.className = 'modifier';
+                        extraNote.textContent = '+' + (extra * 3) + ' extra';
+                        sixthControls.appendChild(extraNote);
+
+                        const resetBtn = document.createElement('button');
+                        resetBtn.className = 'smallButton';
+                        resetBtn.textContent = 'Reset';
+                        resetBtn.addEventListener('click', () => ss.reset(anteNum));
+                        sixthControls.appendChild(resetBtn);
+                    }
+
+                    sixthElement.appendChild(sixthControls);
+                }
+
                 queueInfo.appendChild(sixthElement);
             }
 
@@ -1350,7 +1430,34 @@ function searchAndHighlight() {
                     packsContainer.appendChild(packItem);
                 });
 
+                // Reveal packs beyond the game's default count, one at a time
+                const ps = window.packState;
+                if (ps) {
+                    const packControls = document.createElement('div');
+                    packControls.className = 'packControls';
 
+                    const moreBtn = document.createElement('button');
+                    moreBtn.className = 'smallButton';
+                    moreBtn.textContent = 'Reveal another pack';
+                    moreBtn.addEventListener('click', () => ps.more(anteNum));
+                    packControls.appendChild(moreBtn);
+
+                    const extra = ps.extra[anteNum] || 0;
+                    if (extra > 0) {
+                        const extraNote = document.createElement('span');
+                        extraNote.className = 'modifier';
+                        extraNote.textContent = '+' + extra + ' extra';
+                        packControls.appendChild(extraNote);
+
+                        const resetBtn = document.createElement('button');
+                        resetBtn.className = 'smallButton';
+                        resetBtn.textContent = 'Reset';
+                        resetBtn.addEventListener('click', () => ps.reset(anteNum));
+                        packControls.appendChild(resetBtn);
+                    }
+
+                    queueContainer.appendChild(packControls);
+                }
             }
 
 
