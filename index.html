@@ -229,6 +229,18 @@
         <label for="cardsPerAnte">Cards per Ante:</label>
         <input type="text" id="cardsPerAnte" value = "15,50,50,50,50,50,50,50" required>
         <br>
+        <label for="judgementCount">Judgement Jokers:</label>
+        <input type="number" id="judgementCount" min="0" max="999" value="10" required>
+        <br>
+        <label for="cartomancerCount">Cartomancer Tarots:</label>
+        <input type="number" id="cartomancerCount" min="0" max="999" value="20" required>
+        <br>
+        <label for="eightBallCount">8 Ball / Purple Seal Tarots:</label>
+        <input type="number" id="eightBallCount" min="0" max="999" value="20" required>
+        <br>
+        <label for="emperorCount">Emperor Tarots:</label>
+        <input type="number" id="emperorCount" min="0" max="999" value="20" required>
+        <br>
         <label for="deck">Deck:</label>
         <select id="deck" required>
           <option value="Red Deck">Red Deck</option>
@@ -445,6 +457,10 @@
 
     const anteInput = document.getElementById('ante');
     const cardsPerAnteInput = document.getElementById('cardsPerAnte');
+    const judgementInput = document.getElementById('judgementCount');
+    const cartomancerInput = document.getElementById('cartomancerCount');
+    const eightBallInput = document.getElementById('eightBallCount');
+    const emperorInput = document.getElementById('emperorCount');
     const deckSelect = document.getElementById('deck');
     const stakeSelect = document.getElementById('stake');
     const versionSelect = document.getElementById('version');
@@ -485,6 +501,10 @@
       // Add non-default input values as URL parameters
       if (anteInput.value !== '8') params.append('ante', anteInput.value);
       if (cardsPerAnteInput.value !== '15,50,50,50,50,50,50,50') params.append('cardsPerAnte', cardsPerAnteInput.value);
+      if (judgementInput.value !== '10') params.append('judgement', judgementInput.value);
+      if (cartomancerInput.value !== '20') params.append('cartomancer', cartomancerInput.value);
+      if (eightBallInput.value !== '20') params.append('eightBall', eightBallInput.value);
+      if (emperorInput.value !== '20') params.append('emperor', emperorInput.value);
       if (deckSelect.value !== 'Red Deck') params.append('deck', deckSelect.value);
       if (stakeSelect.value !== 'White Stake') params.append('stake', stakeSelect.value);
       if (versionSelect.value != '10106') params.append('version', versionSelect.value);
@@ -525,6 +545,11 @@
       // Get input values
       const ante = parseInt(anteInput.value, 10);
       const cardsPerAnte = cardsPerAnteInput.value.split(',').map(Number);
+      const clampCount = (v) => Math.max(0, Math.min(999, parseInt(v, 10) || 0));
+      const judgementCount = clampCount(judgementInput.value);
+      const cartomancerCount = clampCount(cartomancerInput.value);
+      const eightBallCount = clampCount(eightBallInput.value);
+      const emperorCount = clampCount(emperorInput.value);
       const deck = deckSelect.value;
       const stake = stakeSelect.value;
       const version = parseInt(versionSelect.value);
@@ -575,6 +600,41 @@
             };
         };
         output += "Tags: " + inst.nextTag(a) + ", " + inst.nextTag(a) + "\n";
+
+        // Sixth Sense: one Spectral per round (3 rounds per ante). Uses the
+        // game's "sixth" source key, so it doesn't disturb any other RNG stream.
+        var sixthSense = [];
+        for (let r = 0; r < 3; r++) {
+          sixthSense.push(inst.nextSpectral("sixth", a, false));
+        }
+        output += "Sixth Sense: " + sixthSense.join(", ") + "\n";
+
+        // Judgement: creates a Joker using the game's "jud" source key.
+        // Jokers created this way can have an edition but never stake stickers.
+        var judgement = [];
+        for (let i = 0; i < judgementCount; i++) {
+          var jkr = inst.nextJoker("jud", a, false);
+          var name = "";
+          if (jkr.edition != "No Edition") name += jkr.edition + " ";
+          name += jkr.joker;
+          judgement.push(name);
+          jkr.delete();
+        }
+        output += "Judgement: " + judgement.join(", ") + "\n";
+
+        // Tarot generators. Each source key is its own RNG stream.
+        // 8 Ball and Purple Seal share the "8ba" key in the game.
+        var cartomancer = [];
+        for (let i = 0; i < cartomancerCount; i++) cartomancer.push(inst.nextTarot("car", a, false));
+        output += "Cartomancer: " + cartomancer.join(", ") + "\n";
+
+        var eightBall = [];
+        for (let i = 0; i < eightBallCount; i++) eightBall.push(inst.nextTarot("8ba", a, false));
+        output += "8 Ball / Purple Seal: " + eightBall.join(", ") + "\n";
+
+        var emperor = [];
+        for (let i = 0; i < emperorCount; i++) emperor.push(inst.nextTarot("emp", a, false));
+        output += "Emperor: " + emperor.join(", ") + "\n";
 
         output += "Shop Queue: \n";
         for (let q = 1; q <= cardsPerAnte[a-1]; q++) {
@@ -688,6 +748,18 @@
       const urlStake = urlParams.get('stake');
       const urlVersion = urlParams.get('version');
       const urlUnlocks = urlParams.get('unlocks');
+      const urlJudgement = urlParams.get('judgement');
+      const urlCartomancer = urlParams.get('cartomancer');
+      const urlEightBall = urlParams.get('eightBall');
+      const urlEmperor = urlParams.get('emperor');
+
+      const clampCountField = (input, value) => {
+        input.value = Math.max(0, Math.min(999, parseInt(value, 10) || 0));
+      };
+      if (urlJudgement !== null) clampCountField(document.getElementById('judgementCount'), urlJudgement);
+      if (urlCartomancer !== null) clampCountField(document.getElementById('cartomancerCount'), urlCartomancer);
+      if (urlEightBall !== null) clampCountField(document.getElementById('eightBallCount'), urlEightBall);
+      if (urlEmperor !== null) clampCountField(document.getElementById('emperorCount'), urlEmperor);
 
       if (urlUnlocks) {
         // Decode the base64 string

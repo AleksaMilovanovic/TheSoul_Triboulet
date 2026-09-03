@@ -402,7 +402,7 @@ function searchAndHighlight() {
         .map(term => term.trim().toLowerCase())
         .filter(term => term.length >= 4); // Filter out terms less than 4 letters
 
-    const queueItems = document.querySelectorAll('.queueItem, .packItem > div, .voucherContainer, .tagContainer, .bossContainer');
+    const queueItems = document.querySelectorAll('.queueItem, .packItem > div, .voucherContainer, .tagContainer, .sixthContainer, .bossContainer');
 
     queueItems.forEach(item => {
         const itemText = item.textContent.toLowerCase();
@@ -495,6 +495,36 @@ function searchAndHighlight() {
         font-weight: bold;
         margin-bottom: 5px;
         color: #ffffff;
+    }
+
+    .generatorTitle {
+        margin-top: 12px;
+        cursor: pointer;
+        user-select: none;
+        display: inline-block;
+        padding: 4px 8px;
+        border: 1px solid #555555;
+        border-radius: 3px;
+        background-color: #3a3a3a;
+    }
+
+    .generatorTitle:hover {
+        background-color: #4a4a4a;
+    }
+
+    .generatorTitle::before {
+        content: "▾";
+        display: inline-block;
+        width: 1em;
+        margin-right: 4px;
+    }
+
+    .generatorTitle.collapsed::before {
+        content: "▸";
+    }
+
+    .scrollable[hidden] {
+        display: none;
     }
 
     .queueInfo {
@@ -632,7 +662,8 @@ function searchAndHighlight() {
         justify-content: center;
     }
 .voucherContainer,
-.tagContainer {
+.tagContainer,
+.sixthContainer {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -642,13 +673,15 @@ function searchAndHighlight() {
 }
 
 .voucherContainer canvas,
-.tagContainer canvas {
+.tagContainer canvas,
+.sixthContainer canvas {
     margin-bottom: 3px;
     pointer-events: none;
 }
 
 .voucherName,
-.tagName {
+.tagName,
+.sixthName {
     font-size: 10px;
     margin-bottom: 3px;
     word-wrap: break-word;
@@ -744,16 +777,32 @@ function searchAndHighlight() {
                 const bossMatch = match.match(/Boss: (.+)/);
                 const voucherMatch = match.match(/Voucher: (.+)/);
                 const tagsMatch = match.match(/Tags: (.+)/);
+                const sixthMatch = match.match(/Sixth Sense: (.+)/);
+                const generatorDefs = [
+                    { key: 'Judgement', label: 'Judgement' },
+                    { key: 'Cartomancer', label: 'Cartomancer' },
+                    { key: '8 Ball / Purple Seal', label: '8 Ball / Purple Seal' },
+                    { key: 'Emperor', label: 'Emperor' },
+                ];
+                const generators = [];
+                generatorDefs.forEach(def => {
+                    const genMatch = match.match(new RegExp(def.key.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&') + ': (.*)'));
+                    if (genMatch) {
+                        const cards = genMatch[1].trim() === '' ? [] : genMatch[1].trim().split(',').map(card => card.trim());
+                        generators.push({ label: def.label, cards });
+                    }
+                });
                 const queueMatch = match.match(/Shop Queue:([\s\S]*?)(?=Packs:|$)/);
                 const packsMatch = match.match(/Packs:([\s\S]*?)(?=(?:==ANTE \d+==|$))/);
 
                 const boss = bossMatch ? bossMatch[1].trim() : '';
                 const voucher = voucherMatch ? voucherMatch[1].trim() : '';
                 const tags = tagsMatch ? tagsMatch[1].trim().split(',').map(tag => tag.trim()) : [];
+                const sixthSense = sixthMatch ? sixthMatch[1].trim().split(',').map(card => card.trim()) : [];
                 const queue = queueMatch ? queueMatch[1].trim().split('\n').filter(item => item.trim() !== '') : [];
                 const packs = packsMatch ? packsMatch[1].trim().split('\n').filter(item => item.trim() !== '') : [];
 
-                shopQueues.push({ title, queue, boss, voucher, tags, packs });
+                shopQueues.push({ title, queue, boss, voucher, tags, sixthSense, generators, packs });
             });
         }
 
@@ -798,6 +847,45 @@ function searchAndHighlight() {
         }
     }
 
+    // Build one card tile (canvas + name + modifiers + stickers) from a queue line like "3) Foil Blueprint"
+    function createQueueItem(item) {
+        const { cardName, itemModifiers, itemStickers } = parseCardItem(item);
+
+        const queueItem = document.createElement('div');
+        queueItem.className = 'queueItem';
+
+        const canvas = document.createElement('canvas');
+        canvas.width = 71;
+        canvas.height = 95;
+
+        const itemType = determineItemType(cardName);
+        if (itemType !== 'unknown') {
+            maskToCanvas(canvas, cardName, itemType, itemModifiers, itemStickers);
+        }
+
+        queueItem.appendChild(canvas);
+
+        const itemText = document.createElement('div');
+        itemText.textContent = cardName;
+        queueItem.appendChild(itemText);
+
+        itemModifiers.forEach(mod => {
+            const modifierText = document.createElement('div');
+            modifierText.className = 'modifier';
+            modifierText.textContent = mod;
+            queueItem.appendChild(modifierText);
+        });
+
+        itemStickers.forEach(stick => {
+            const stickerText = document.createElement('div');
+            stickerText.className = 'sticker';
+            stickerText.textContent = stick;
+            queueItem.appendChild(stickerText);
+        });
+
+        return queueItem;
+    }
+
     // Function to create and display the side-scrolling list
     function displayShopQueues() {
         const textarea = document.getElementById('outputBox');
@@ -806,7 +894,7 @@ function searchAndHighlight() {
 
         scrollingContainer.innerHTML = ''; // Clear previous content
 
-        shopQueues.forEach(({ title, queue, boss, voucher, tags, packs }) => {
+        shopQueues.forEach(({ title, queue, boss, voucher, tags, sixthSense, generators, packs }) => {
             const queueContainer = document.createElement('div');
             queueContainer.className = 'queueContainer';
 
@@ -894,6 +982,43 @@ function searchAndHighlight() {
             tagsElement.appendChild(tagsContainer);
             queueInfo.appendChild(tagsElement);
 
+            if (sixthSense.length > 0) {
+                const sixthElement = document.createElement('div');
+                sixthElement.innerHTML = '<b><u>Sixth Sense</u></b>';
+                sixthElement.style = "font-size: 16px";
+
+                const sixthCardsContainer = document.createElement('div');
+                sixthCardsContainer.className = 'tagsContainer';
+
+                sixthSense.forEach((cardName, idx) => {
+                    const sixthContainer = document.createElement('div');
+                    sixthContainer.className = 'sixthContainer';
+
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 71;
+                    canvas.height = 95;
+                    if (determineItemType(cardName) !== 'unknown') {
+                        maskToCanvas(canvas, cardName, 'tarot', [], []);
+                    }
+                    sixthContainer.appendChild(canvas);
+
+                    const nameElement = document.createElement('div');
+                    nameElement.textContent = cardName;
+                    nameElement.classList.add('sixthName');
+                    sixthContainer.appendChild(nameElement);
+
+                    const roundElement = document.createElement('div');
+                    roundElement.textContent = 'Round ' + (idx + 1);
+                    roundElement.classList.add('modifier');
+                    sixthContainer.appendChild(roundElement);
+
+                    sixthCardsContainer.appendChild(sixthContainer);
+                });
+
+                sixthElement.appendChild(sixthCardsContainer);
+                queueInfo.appendChild(sixthElement);
+            }
+
             queueContainer.appendChild(queueInfo);
 
             const scrollable = document.createElement('div');
@@ -901,41 +1026,49 @@ function searchAndHighlight() {
             queueContainer.appendChild(scrollable);
 
             queue.forEach(item => {
-                const { cardName, itemModifiers, itemStickers } = parseCardItem(item);
+                scrollable.appendChild(createQueueItem(item));
+            });
 
-                const queueItem = document.createElement('div');
-                queueItem.className = 'queueItem';
+            // Card generator rows (Judgement, Cartomancer, 8 Ball / Purple Seal, Emperor).
+            // Collapsed by default; tiles are only built the first time a row is expanded.
+            generators.forEach(({ label, cards }) => {
+                if (cards.length === 0) return;
 
-                const canvas = document.createElement('canvas');
-                canvas.width = 71;
-                canvas.height = 95;
+                const generatorTitle = document.createElement('div');
+                generatorTitle.className = 'queueTitle generatorTitle collapsed';
+                generatorTitle.textContent = label + ' (' + cards.length + ')';
+                generatorTitle.setAttribute('role', 'button');
+                generatorTitle.setAttribute('aria-expanded', 'false');
+                generatorTitle.tabIndex = 0;
+                queueContainer.appendChild(generatorTitle);
 
-                const itemType = determineItemType(cardName);
-                if (itemType !== 'unknown') {
-                    maskToCanvas(canvas, cardName, itemType, itemModifiers, itemStickers);
-                }
+                const generatorScrollable = document.createElement('div');
+                generatorScrollable.className = 'scrollable no-select';
+                generatorScrollable.hidden = true;
+                queueContainer.appendChild(generatorScrollable);
 
-                queueItem.appendChild(canvas);
-
-                const itemText = document.createElement('div');
-                itemText.textContent = cardName;
-                queueItem.appendChild(itemText);
-
-                itemModifiers.forEach(mod => {
-                    const modifierText = document.createElement('div');
-                    modifierText.className = 'modifier';
-                    modifierText.textContent = mod;
-                    queueItem.appendChild(modifierText);
+                let rendered = false;
+                const toggle = () => {
+                    const expanded = generatorScrollable.hidden;
+                    if (expanded && !rendered) {
+                        cards.forEach((card, idx) => {
+                            generatorScrollable.appendChild(createQueueItem((idx + 1) + ') ' + card));
+                        });
+                        attachDragScroll(generatorScrollable);
+                        rendered = true;
+                        searchAndHighlight();
+                    }
+                    generatorScrollable.hidden = !expanded;
+                    generatorTitle.classList.toggle('collapsed', !expanded);
+                    generatorTitle.setAttribute('aria-expanded', String(expanded));
+                };
+                generatorTitle.addEventListener('click', toggle);
+                generatorTitle.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggle();
+                    }
                 });
-
-                itemStickers.forEach(stick => {
-                    const stickerText = document.createElement('div');
-                    stickerText.className = 'sticker';
-                    stickerText.textContent = stick;
-                    queueItem.appendChild(stickerText);
-                });
-
-                scrollable.appendChild(queueItem);
             });
 
             if (packs.length > 0) {
@@ -1036,40 +1169,45 @@ function searchAndHighlight() {
         });
 
         // Add draggable scrolling functionality
-        document.querySelectorAll('.scrollable').forEach(scrollable => {
-            let isDown = false;
-            let startX;
-            let scrollLeft;
-
-            scrollable.addEventListener('mousedown', (e) => {
-                isDown = true;
-                scrollable.classList.add('active');
-                startX = e.pageX - scrollable.offsetLeft;
-                scrollLeft = scrollable.scrollLeft;
-                scrollable.classList.add('no-select');
-            });
-
-            scrollable.addEventListener('mouseleave', () => {
-                isDown = false;
-                scrollable.classList.remove('active');
-                scrollable.classList.remove('no-select');
-            });
-
-            scrollable.addEventListener('mouseup', () => {
-                isDown = false;
-                scrollable.classList.remove('active');
-                scrollable.classList.remove('no-select');
-            });
-
-            scrollable.addEventListener('mousemove', (e) => {
-                if (!isDown) return;
-                e.preventDefault();
-                const x = e.pageX - scrollable.offsetLeft;
-                const walk = x - startX; // One-to-one scroll
-                scrollable.scrollLeft = scrollLeft - walk;
-            });
-        });
+        document.querySelectorAll('.scrollable').forEach(attachDragScroll);
         searchAndHighlight();
+    }
+
+    function attachDragScroll(scrollable) {
+        if (scrollable.dataset.dragScroll) return;
+        scrollable.dataset.dragScroll = '1';
+
+        let isDown = false;
+        let startX;
+        let scrollLeft;
+
+        scrollable.addEventListener('mousedown', (e) => {
+            isDown = true;
+            scrollable.classList.add('active');
+            startX = e.pageX - scrollable.offsetLeft;
+            scrollLeft = scrollable.scrollLeft;
+            scrollable.classList.add('no-select');
+        });
+
+        scrollable.addEventListener('mouseleave', () => {
+            isDown = false;
+            scrollable.classList.remove('active');
+            scrollable.classList.remove('no-select');
+        });
+
+        scrollable.addEventListener('mouseup', () => {
+            isDown = false;
+            scrollable.classList.remove('active');
+            scrollable.classList.remove('no-select');
+        });
+
+        scrollable.addEventListener('mousemove', (e) => {
+            if (!isDown) return;
+            e.preventDefault();
+            const x = e.pageX - scrollable.offsetLeft;
+            const walk = x - startX; // One-to-one scroll
+            scrollable.scrollLeft = scrollLeft - walk;
+        });
     }
 
 
