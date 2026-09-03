@@ -453,6 +453,38 @@
     unlockBtn.addEventListener('click', handleUnlock);
 
 
+    // Voucher purchase tracking for run-guide use: voucher name -> ante it was bought in.
+    // Nothing is assumed bought; the offered voucher for each ante is rolled against
+    // what you have actually marked as owned before that ante.
+    var voucherPurchases = {};
+    const DECK_VOUCHERS = {
+      "Magic Deck": ["Crystal Ball"],
+      "Nebula Deck": ["Telescope"],
+      "Zodiac Deck": ["Tarot Merchant", "Planet Merchant", "Overstock"]
+    };
+    function voucherPairs() {
+      var pairs = [];
+      for (let i = 0; i < Immolate.VOUCHERS.size(); i += 2) {
+        pairs.push([Immolate.VOUCHERS.get(i), Immolate.VOUCHERS.get(i + 1)]);
+      }
+      return pairs;
+    }
+    window.voucherState = {
+      purchases: voucherPurchases,
+      get pairs() { return voucherPairs(); },
+      get deckVouchers() { return DECK_VOUCHERS[document.getElementById('deck').value] || []; },
+      buy: function(name, ante) {
+        voucherPurchases[name] = ante;
+        performAnalysis();
+      },
+      unbuy: function(name) {
+        delete voucherPurchases[name];
+        // Dropping a tier-1 voucher also drops its tier-2 upgrade.
+        voucherPairs().forEach(([t1, t2]) => { if (t1 == name) delete voucherPurchases[t2]; });
+        performAnalysis();
+      }
+    };
+
     instantAnalysis = false;
 
     const anteInput = document.getElementById('ante');
@@ -509,6 +541,8 @@
       if (stakeSelect.value !== 'White Stake') params.append('stake', stakeSelect.value);
       if (versionSelect.value != '10106') params.append('version', versionSelect.value);
       if (seedInput.value !== '') params.append('seed', seedInput.value);
+      const purchaseList = Object.keys(voucherPurchases).map(n => n + ':' + voucherPurchases[n]).join(',');
+      if (purchaseList !== '') params.append('vouchers', purchaseList);
       if (base64Unlocks != '/////////x/4') params.append('unlocks', base64Unlocks);
 
       const url = `${baseUrl}?${params.toString()}`;
@@ -583,22 +617,31 @@
       inst.setStake(stake);
       inst.setDeck(deck);
       var ghostDeck = (deck == "Ghost Deck");
+      var pairs = voucherPairs();
+      (DECK_VOUCHERS[deck] || []).forEach(dv => {
+        for (const [t1, t2] of pairs) {
+          if (t1 == dv && !selectedOptions[options.indexOf(t2)]) inst.lock(t2);
+        }
+      });
       for (let a = 1; a <= ante; a++) {
         inst.initUnlocks(a, false);
+
+        // Vouchers bought in the previous ante take effect now: they leave the
+        // pool, unlock their tier-2 upgrade, and apply their shop effects.
+        for (const name in voucherPurchases) {
+          if (voucherPurchases[name] != a - 1) continue;
+          inst.activateVoucher(name);
+          for (const [t1, t2] of pairs) {
+            // Keep the upgrade locked if the profile hasn't unlocked it
+            if (t1 == name && !selectedOptions[options.indexOf(t2)]) inst.lock(t2);
+          }
+        }
+
         output += "==ANTE " + a + "==\n"
         output += "Boss: " + inst.nextBoss(a) + "\n";
-        var voucher = inst.nextVoucher(a);
-        output += "Voucher: " + voucher + "\n";
-        inst.lock(voucher);
-        // Unlock next level voucher
-        for (let i = 0; i < Immolate.VOUCHERS.size(); i+=2) {
-            if (Immolate.VOUCHERS.get(i) == voucher) {
-                // Only unlock it if it's unlockable
-                if (selectedOptions[options.indexOf(Immolate.VOUCHERS.get(i+1))]) {
-                  inst.unlock(Immolate.VOUCHERS.get(i+1));
-                };
-            };
-        };
+        output += "Voucher: " + inst.nextVoucher(a) + "\n";
+        var ownedNow = Object.keys(voucherPurchases).filter(n => voucherPurchases[n] <= a);
+        if (ownedNow.length > 0) output += "Owned Vouchers: " + ownedNow.join(", ") + "\n";
         output += "Tags: " + inst.nextTag(a) + ", " + inst.nextTag(a) + "\n";
 
         // Sixth Sense: one Spectral per round (3 rounds per ante). Uses the
@@ -729,6 +772,7 @@
 
       // Update output box with analysis result
       outputBox.value = output;
+      document.dispatchEvent(new Event('analysisComplete'));
     }
 
     window.addEventListener('DOMContentLoaded', () => {
@@ -752,6 +796,16 @@
       const urlCartomancer = urlParams.get('cartomancer');
       const urlEightBall = urlParams.get('eightBall');
       const urlEmperor = urlParams.get('emperor');
+      const urlVouchers = urlParams.get('vouchers');
+
+      if (urlVouchers) {
+        urlVouchers.split(',').forEach(entry => {
+          const idx = entry.lastIndexOf(':');
+          if (idx <= 0) return;
+          const boughtAnte = parseInt(entry.slice(idx + 1), 10);
+          if (!isNaN(boughtAnte) && boughtAnte >= 1) voucherPurchases[entry.slice(0, idx)] = boughtAnte;
+        });
+      }
 
       const clampCountField = (input, value) => {
         input.value = Math.max(0, Math.min(999, parseInt(value, 10) || 0));

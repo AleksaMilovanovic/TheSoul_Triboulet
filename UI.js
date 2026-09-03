@@ -497,7 +497,7 @@ function searchAndHighlight() {
         color: #ffffff;
     }
 
-    .generatorTitle {
+    .collapsibleTitle {
         margin-top: 12px;
         cursor: pointer;
         user-select: none;
@@ -508,23 +508,89 @@ function searchAndHighlight() {
         background-color: #3a3a3a;
     }
 
-    .generatorTitle:hover {
+    .collapsibleTitle:hover {
         background-color: #4a4a4a;
     }
 
-    .generatorTitle::before {
+    .collapsibleTitle::before {
         content: "▾";
         display: inline-block;
         width: 1em;
         margin-right: 4px;
     }
 
-    .generatorTitle.collapsed::before {
+    .collapsibleTitle.collapsed::before {
         content: "▸";
     }
 
-    .scrollable[hidden] {
-        display: none;
+    /* Collapsible bodies set their own display (flex etc.), which would otherwise beat the UA hidden rule */
+    [hidden] {
+        display: none !important;
+    }
+
+    .clickable {
+        cursor: pointer;
+    }
+
+    .voucherContainer.clickable:hover,
+    .voucherTile.clickable:hover {
+        background-color: #3a3a3a;
+        border-radius: 3px;
+    }
+
+    .voucherContainer.owned,
+    .voucherTile.owned {
+        outline: 2px solid #96ed79;
+        border-radius: 3px;
+    }
+
+    .boughtLabel {
+        font-size: 10px;
+        color: #96ed79;
+    }
+
+    .voucherPanel {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 20px;
+        padding: 10px;
+        border: 1px solid #444444;
+        margin-bottom: 10px;
+    }
+
+    .voucherSection {
+        flex: 1 1 300px;
+    }
+
+    .voucherSectionTitle {
+        font-weight: bold;
+        margin-bottom: 6px;
+        color: #cccccc;
+    }
+
+    .voucherGrid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .voucherTile {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        font-size: 10px;
+        width: 80px;
+        padding: 4px;
+    }
+
+    .voucherTile canvas {
+        margin-bottom: 3px;
+        pointer-events: none;
+    }
+
+    .voucherTile.unavailable {
+        opacity: 0.35;
     }
 
     .queueInfo {
@@ -847,6 +913,63 @@ function searchAndHighlight() {
         }
     }
 
+    // Remembers which collapsible panels are open so a re-analysis doesn't close them.
+    const expandedPanels = new Set();
+
+    // Collapsible section. renderBody(body) runs once, the first time the panel is expanded.
+    function createCollapsible(parent, key, label, renderBody) {
+        const title = document.createElement('div');
+        title.className = 'queueTitle collapsibleTitle';
+        title.textContent = label;
+        title.setAttribute('role', 'button');
+        title.tabIndex = 0;
+        parent.appendChild(title);
+
+        const body = document.createElement('div');
+        body.hidden = true;
+        parent.appendChild(body);
+
+        let rendered = false;
+        const setExpanded = (expanded) => {
+            if (expanded && !rendered) {
+                renderBody(body);
+                rendered = true;
+                searchAndHighlight();
+            }
+            body.hidden = !expanded;
+            title.classList.toggle('collapsed', !expanded);
+            title.setAttribute('aria-expanded', String(expanded));
+            if (expanded) expandedPanels.add(key); else expandedPanels.delete(key);
+        };
+        title.addEventListener('click', () => setExpanded(body.hidden));
+        title.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setExpanded(body.hidden);
+            }
+        });
+        setExpanded(expandedPanels.has(key));
+        return body;
+    }
+
+    function makeVoucherTile(name) {
+        const tile = document.createElement('div');
+        tile.className = 'voucherTile';
+
+        const canvas = document.createElement('canvas');
+        canvas.width = 71;
+        canvas.height = 95;
+        renderVoucher(canvas, name);
+        tile.appendChild(canvas);
+
+        const nameElement = document.createElement('div');
+        nameElement.textContent = name;
+        nameElement.classList.add('voucherName');
+        tile.appendChild(nameElement);
+
+        return tile;
+    }
+
     // Build one card tile (canvas + name + modifiers + stickers) from a queue line like "3) Foil Blueprint"
     function createQueueItem(item) {
         const { cardName, itemModifiers, itemStickers } = parseCardItem(item);
@@ -895,6 +1018,9 @@ function searchAndHighlight() {
         scrollingContainer.innerHTML = ''; // Clear previous content
 
         shopQueues.forEach(({ title, queue, boss, voucher, tags, sixthSense, generators, packs }) => {
+            const anteNum = parseInt((title.match(/\d+/) || ['0'])[0], 10);
+            const vs = window.voucherState;
+
             const queueContainer = document.createElement('div');
             queueContainer.className = 'queueContainer';
 
@@ -925,6 +1051,25 @@ function searchAndHighlight() {
                 voucherNameElement.textContent = voucher;
                 voucherNameElement.classList.add('voucherName');
                 voucherContainer.appendChild(voucherNameElement);
+
+                if (vs) {
+                    const bought = vs.purchases[voucher];
+                    voucherContainer.classList.add('clickable');
+                    voucherContainer.title = bought !== undefined
+                        ? 'Click to mark as not bought'
+                        : 'Click to mark as bought in this ante';
+                    if (bought !== undefined) {
+                        voucherContainer.classList.add('owned');
+                        const boughtLabel = document.createElement('div');
+                        boughtLabel.className = 'boughtLabel';
+                        boughtLabel.textContent = bought === anteNum ? 'Bought' : 'Bought ante ' + bought;
+                        voucherContainer.appendChild(boughtLabel);
+                    }
+                    voucherContainer.addEventListener('click', () => {
+                        if (vs.purchases[voucher] !== undefined) vs.unbuy(voucher);
+                        else vs.buy(voucher, anteNum);
+                    });
+                }
 
                 voucherElement.appendChild(voucherContainer);
             }
@@ -1021,6 +1166,77 @@ function searchAndHighlight() {
 
             queueContainer.appendChild(queueInfo);
 
+            // Per-ante voucher ownership panel. Owned = bought in this ante or earlier.
+            if (vs) {
+                const pairs = vs.pairs;
+                const deckVouchers = vs.deckVouchers;
+                const isOwnedAt = (name) => deckVouchers.includes(name) || (vs.purchases[name] !== undefined && vs.purchases[name] <= anteNum);
+                const ownedCount = pairs.flat().filter(isOwnedAt).length;
+
+                createCollapsible(queueContainer, title + ':vouchers', 'Vouchers (owned ' + ownedCount + ')', (body) => {
+                    body.className = 'voucherPanel';
+
+                    const makeSection = (heading) => {
+                        const section = document.createElement('div');
+                        section.className = 'voucherSection';
+                        const h = document.createElement('div');
+                        h.className = 'voucherSectionTitle';
+                        h.textContent = heading;
+                        section.appendChild(h);
+                        const grid = document.createElement('div');
+                        grid.className = 'voucherGrid';
+                        section.appendChild(grid);
+                        body.appendChild(section);
+                        return grid;
+                    };
+                    const ownedGrid = makeSection('Owned');
+                    const unownedGrid = makeSection('Unowned');
+
+                    pairs.forEach(([t1, t2]) => {
+                        [t1, t2].forEach((name, tier) => {
+                            const bought = vs.purchases[name];
+                            const fromDeck = deckVouchers.includes(name);
+
+                            const tile = makeVoucherTile(name);
+                            const note = document.createElement('div');
+                            note.className = 'modifier';
+
+                            if (fromDeck) {
+                                tile.classList.add('owned');
+                                note.textContent = 'From deck';
+                                ownedGrid.appendChild(tile);
+                            } else if (isOwnedAt(name)) {
+                                tile.classList.add('owned', 'clickable');
+                                note.textContent = bought === anteNum ? 'Bought this ante' : 'Bought ante ' + bought;
+                                tile.title = 'Click to mark as not bought';
+                                tile.addEventListener('click', () => vs.unbuy(name));
+                                ownedGrid.appendChild(tile);
+                            } else {
+                                const prereqOk = tier === 0 || isOwnedAt(t1);
+                                if (prereqOk) {
+                                    tile.classList.add('clickable');
+                                    note.textContent = 'Click to buy';
+                                    tile.title = 'Click to mark as bought in this ante';
+                                    tile.addEventListener('click', () => vs.buy(name, anteNum));
+                                } else {
+                                    tile.classList.add('unavailable');
+                                    note.textContent = 'Needs ' + t1;
+                                }
+                                unownedGrid.appendChild(tile);
+                            }
+                            tile.appendChild(note);
+                        });
+                    });
+
+                    if (ownedGrid.children.length === 0) {
+                        const none = document.createElement('div');
+                        none.className = 'modifier';
+                        none.textContent = 'None';
+                        ownedGrid.appendChild(none);
+                    }
+                });
+            }
+
             const scrollable = document.createElement('div');
             scrollable.className = 'scrollable no-select';
             queueContainer.appendChild(scrollable);
@@ -1033,41 +1249,14 @@ function searchAndHighlight() {
             // Collapsed by default; tiles are only built the first time a row is expanded.
             generators.forEach(({ label, cards }) => {
                 if (cards.length === 0) return;
-
-                const generatorTitle = document.createElement('div');
-                generatorTitle.className = 'queueTitle generatorTitle collapsed';
-                generatorTitle.textContent = label + ' (' + cards.length + ')';
-                generatorTitle.setAttribute('role', 'button');
-                generatorTitle.setAttribute('aria-expanded', 'false');
-                generatorTitle.tabIndex = 0;
-                queueContainer.appendChild(generatorTitle);
-
-                const generatorScrollable = document.createElement('div');
-                generatorScrollable.className = 'scrollable no-select';
-                generatorScrollable.hidden = true;
-                queueContainer.appendChild(generatorScrollable);
-
-                let rendered = false;
-                const toggle = () => {
-                    const expanded = generatorScrollable.hidden;
-                    if (expanded && !rendered) {
-                        cards.forEach((card, idx) => {
-                            generatorScrollable.appendChild(createQueueItem((idx + 1) + ') ' + card));
-                        });
-                        attachDragScroll(generatorScrollable);
-                        rendered = true;
-                        searchAndHighlight();
-                    }
-                    generatorScrollable.hidden = !expanded;
-                    generatorTitle.classList.toggle('collapsed', !expanded);
-                    generatorTitle.setAttribute('aria-expanded', String(expanded));
-                };
-                generatorTitle.addEventListener('click', toggle);
-                generatorTitle.addEventListener('keydown', (e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        toggle();
-                    }
+                createCollapsible(queueContainer, title + ':' + label, label + ' (' + cards.length + ')', (body) => {
+                    const generatorScrollable = document.createElement('div');
+                    generatorScrollable.className = 'scrollable no-select';
+                    cards.forEach((card, idx) => {
+                        generatorScrollable.appendChild(createQueueItem((idx + 1) + ') ' + card));
+                    });
+                    body.appendChild(generatorScrollable);
+                    attachDragScroll(generatorScrollable);
                 });
             });
 
@@ -1211,8 +1400,8 @@ function searchAndHighlight() {
     }
 
 
-    // Add event listener to the "Analyze" button
-    document.getElementById('analyzeButton').addEventListener('click', displayShopQueues);
+    // Re-render whenever index.html finishes an analysis (Analyze button, URL load, voucher toggles)
+    document.addEventListener('analysisComplete', displayShopQueues);
 
     // Initialize the display
     displayShopQueues();
