@@ -29,108 +29,108 @@ const stickerMap = {
     "Rental": { x: 1, y: 2 }
 };
 
-function maskToCanvas(canvas, itemName, type, itemModifiers, itemStickers) {
-    let itemData;
-    let imgSrc;
-    let gridWidth;
-    let gridHeight;
+// Sprite sheets. Tiles are plain divs with a CSS background-position into the
+// sheet, so the browser holds one decoded copy of each sheet no matter how many
+// tiles exist. (The previous per-tile canvas + Image approach ran out of memory
+// on long runs.)
+const SHEETS = {
+    jokers:    { src: 'images/Jokers.png',     cols: 10, rows: 16 },
+    tarots:    { src: 'images/Tarots.png',     cols: 10, rows: 6 },
+    editions:  { src: 'images/Editions.png',   cols: 5,  rows: 1 },
+    stickers:  { src: 'images/stickers.png',   cols: 5,  rows: 3 },
+    deck:      { src: 'images/8BitDeck.png',   cols: 13, rows: 4 },
+    enhancers: { src: 'images/Enhancers.png',  cols: 7,  rows: 5 },
+    bosses:    { src: 'images/BlindChips.png', cols: 21, rows: 31 },
+    tags:      { src: 'images/tags.png',       cols: 6,  rows: 5 },
+    vouchers:  { src: 'images/Vouchers.png',   cols: 9,  rows: 4 },
+};
 
+function spriteLayer(sheet, x, y, w, h) {
+    const el = document.createElement('div');
+    el.className = 'spriteLayer';
+    el.style.backgroundImage = 'url(' + sheet.src + ')';
+    el.style.backgroundSize = (sheet.cols * w) + 'px ' + (sheet.rows * h) + 'px';
+    el.style.backgroundPosition = (-x * w) + 'px ' + (-y * h) + 'px';
+    return el;
+}
+
+function spriteStack(w, h) {
+    const el = document.createElement('div');
+    el.className = 'sprite';
+    el.style.width = w + 'px';
+    el.style.height = h + 'px';
+    return el;
+}
+
+// Joker / tarot / planet / spectral tile with optional edition and stickers
+function makeCardSprite(itemName, type, itemModifiers, itemStickers) {
+    const stack = spriteStack(71, 95);
+    let itemData, sheet;
     if (type === 'joker') {
         itemData = jokers.find(j => j.name === itemName);
-        imgSrc = 'images/Jokers.png';
-        gridWidth = 10;
-        gridHeight = 16;
-    } else if (type === 'tarot' || type === 'planet') {
+        sheet = SHEETS.jokers;
+    } else {
         itemData = tarotsAndPlanets.find(t => t.name === itemName);
-        imgSrc = 'images/Tarots.png';
-        gridWidth = 10;
-        gridHeight = 6;
+        sheet = SHEETS.tarots;
     }
-
     if (!itemData) {
         console.error(`${type.charAt(0).toUpperCase() + type.slice(1)} not found:`, itemName);
-        return;
+        return stack;
     }
 
-    const imageWidth = imgSrc.includes('Jokers.png') ? 710 : 710; // Width of your images
-    const imageHeight = imgSrc.includes('Jokers.png') ? 1520 : 570; // Height of your images
+    stack.appendChild(spriteLayer(sheet, itemData.pos.x, itemData.pos.y, 71, 95));
 
-    const itemWidth = imageWidth / gridWidth;
-    const itemHeight = imageHeight / gridHeight;
+    const edition = itemModifiers.find(mod => ["Foil", "Holographic", "Polychrome"].includes(mod));
+    if (edition) stack.appendChild(spriteLayer(SHEETS.editions, editionMap[edition], 0, 71, 95));
 
-    const ctx = canvas.getContext('2d');
-    const img = new Image();
-    img.src = imgSrc;
-    img.onload = function () {
-        ctx.drawImage(
-            img,
-            itemData.pos.x * itemWidth,
-            itemData.pos.y * itemHeight,
-            itemWidth,
-            itemHeight,
-            0,
-            0,
-            canvas.width,
-            canvas.height
-        );
+    itemStickers.forEach(stick => {
+        if (stickerMap[stick]) stack.appendChild(spriteLayer(SHEETS.stickers, stickerMap[stick].x, stickerMap[stick].y, 71, 95));
+    });
 
-        const overlayModifier = itemModifiers.find(mod => ["Foil", "Holographic", "Polychrome"].includes(mod));
-        if (overlayModifier) {
-            overlayEdition(ctx, canvas, editionMap[overlayModifier]);
-        }
-
-        itemStickers.forEach(stick => {
-            if (stickerMap[stick]) {
-                overlaySticker(ctx, canvas, stickerMap[stick]);
-            }
-        });
-
-        if (itemModifiers.includes("Negative")) {
-            canvas.style.filter = 'invert(0.8)';
-        }
-    };
+    if (itemModifiers.includes("Negative")) stack.style.filter = 'invert(0.8)';
+    return stack;
 }
 
-function overlayEdition(ctx, canvas, index) {
-    const editionImg = new Image();
-    editionImg.src = 'images/Editions.png';
-    editionImg.onload = function () {
-        const editionWidth = editionImg.width / 5;
-        const editionHeight = editionImg.height;
+function makeStandardCardSprite(rank, suit, modifiers, seal) {
+    const stack = spriteStack(71, 95);
+    const enhancerPos = getEnhancerPosition(modifiers);
+    stack.appendChild(spriteLayer(SHEETS.enhancers, enhancerPos.x, enhancerPos.y, 71, 95));
 
-        ctx.drawImage(
-            editionImg,
-            index * editionWidth,
-            0,
-            editionWidth,
-            editionHeight,
-            0,
-            0,
-            canvas.width,
-            canvas.height
-        );
-    };
+    const { x, y } = getStandardCardPosition(rank, suit);
+    if (x !== undefined && y !== undefined) stack.appendChild(spriteLayer(SHEETS.deck, x, y, 71, 95));
+
+    const edition = modifiers.find(mod => ["Foil", "Holographic", "Polychrome"].includes(mod));
+    if (edition) stack.appendChild(spriteLayer(SHEETS.editions, editionMap[edition], 0, 71, 95));
+
+    if (seal) {
+        const sealPos = getSealPosition(seal);
+        if (sealPos) stack.appendChild(spriteLayer(SHEETS.enhancers, sealPos.x, sealPos.y, 71, 95));
+    }
+    return stack;
 }
 
-function overlaySticker(ctx, canvas, position) {
-    const stickerImg = new Image();
-    stickerImg.src = 'images/stickers.png';
-    stickerImg.onload = function () {
-        const stickerWidth = stickerImg.width / 5;
-        const stickerHeight = stickerImg.height / 3;
+function makeBossSprite(bossName) {
+    const stack = spriteStack(34, 34);
+    const bossData = bosses.find(boss => boss.name === bossName);
+    if (!bossData) { console.error("Boss not found:", bossName); return stack; }
+    stack.appendChild(spriteLayer(SHEETS.bosses, bossData.pos.x, bossData.pos.y, 34, 34));
+    return stack;
+}
 
-        ctx.drawImage(
-            stickerImg,
-            position.x * stickerWidth,
-            position.y * stickerHeight,
-            stickerWidth,
-            stickerHeight,
-            0,
-            0,
-            canvas.width,
-            canvas.height
-        );
-    };
+function makeTagSprite(tagName) {
+    const stack = spriteStack(34, 34);
+    const tagData = tags.find(tag => tag.name === tagName);
+    if (!tagData) { console.error("Tag not found:", tagName); return stack; }
+    stack.appendChild(spriteLayer(SHEETS.tags, tagData.pos.x, tagData.pos.y, 34, 34));
+    return stack;
+}
+
+function makeVoucherSprite(voucherName) {
+    const stack = spriteStack(71, 95);
+    const voucherData = vouchers.find(voucher => voucher.name === voucherName);
+    if (!voucherData) { console.error("Voucher not found:", voucherName); return stack; }
+    stack.appendChild(spriteLayer(SHEETS.vouchers, voucherData.pos.x, voucherData.pos.y, 71, 95));
+    return stack;
 }
 
 function getStandardCardName(cardName) {
@@ -170,81 +170,6 @@ function getStandardCardPosition(rank, suit) {
 
     return { x, y };
 }
-
-function renderStandardCard(canvas, rank, suit, modifiers, seal) {
-
-    const ctx = canvas.getContext('2d');
-
-    const deckImg = new Image();
-    deckImg.src = 'images/8BitDeck.png';
-    const enhancersImg = new Image();
-    enhancersImg.src = 'images/Enhancers.png';
-
-    const cardWidth = 71;
-    const cardHeight = 95;
-    const deckWidth = 923;
-    const deckHeight = 380;
-    const enhancersWidth = 497;
-    const enhancersHeight = 475;
-
-    const { x: cardX, y: cardY } = getStandardCardPosition(rank, suit);
-
-    deckImg.onload = function () {
-        enhancersImg.onload = function () {
-            // Draw the card background
-            const enhancerPos = getEnhancerPosition(modifiers);
-            ctx.drawImage(
-                enhancersImg,
-                enhancerPos.x * (enhancersWidth / 7),
-                enhancerPos.y * (enhancersHeight / 5),
-                enhancersWidth / 7,
-                enhancersHeight / 5,
-                0,
-                0,
-                cardWidth,
-                cardHeight
-            );
-
-            // Draw the card rank and suit
-            ctx.drawImage(
-                deckImg,
-                cardX * (deckWidth / 13),
-                cardY * (deckHeight / 4),
-                deckWidth / 13,
-                deckHeight / 4,
-                0,
-                0,
-                cardWidth,
-                cardHeight
-            );
-
-            // Draw the edition overlay
-            const edition = modifiers.find(mod => ["Foil", "Holographic", "Polychrome"].includes(mod));
-            if (edition) {
-                overlayEdition(ctx, canvas, editionMap[edition]);
-            }
-
-            // Draw the seal overlay
-            if (seal) {
-                const sealPos = getSealPosition(seal);
-                ctx.drawImage(
-                    enhancersImg,
-                    sealPos.x * (enhancersWidth / 7),
-                    sealPos.y * (enhancersHeight / 5),
-                    enhancersWidth / 7,
-                    enhancersHeight / 5,
-                    0,
-                    0,
-                    cardWidth,
-                    cardHeight
-                );
-            }
-        };
-        enhancersImg.src = 'images/Enhancers.png';
-    };
-    deckImg.src = 'images/8BitDeck.png';
-}
-
 
 function getEnhancerPosition(modifiers) {
     const enhancerMap = {
@@ -312,97 +237,13 @@ function getModifierColor(modifier) {
     return '#ffffff'; // White (default)
 }
 
-function renderBoss(canvas, bossName) {
-    const bossData = bosses.find(boss => boss.name === bossName);
-    if (!bossData) {
-        console.error("Boss not found:", bossName);
-        return;
-    }
-
-    const ctx = canvas.getContext('2d');
-    const img = new Image();
-    img.src = 'images/BlindChips.png';
-    img.onload = function () {
-        const bossWidth = 714 / 21;
-        const bossHeight = 1054 / 31;
-
-        ctx.drawImage(
-            img,
-            bossData.pos.x * bossWidth,
-            bossData.pos.y * bossHeight,
-            bossWidth,
-            bossHeight,
-            0,
-            0,
-            canvas.width,
-            canvas.height
-        );
-    };
-}
-
-function renderTag(canvas, tagName) {
-    const tagData = tags.find(tag => tag.name === tagName);
-    if (!tagData) {
-        console.error("Tag not found:", tagName);
-        return;
-    }
-
-    const ctx = canvas.getContext('2d');
-    const img = new Image();
-    img.src = 'images/tags.png';
-    img.onload = function () {
-        const tagWidth = 204 / 6;
-        const tagHeight = 170 / 5;
-
-        ctx.drawImage(
-            img,
-            tagData.pos.x * tagWidth,
-            tagData.pos.y * tagHeight,
-            tagWidth,
-            tagHeight,
-            0,
-            0,
-            canvas.width,
-            canvas.height
-        );
-    };
-}
-
-function renderVoucher(canvas, voucherName) {
-    const voucherData = vouchers.find(voucher => voucher.name === voucherName);
-    if (!voucherData) {
-        console.error("Voucher not found:", voucherName);
-        return;
-    }
-
-    const ctx = canvas.getContext('2d');
-    const img = new Image();
-    img.src = 'images/Vouchers.png';
-    img.onload = function () {
-        const voucherWidth = 639 / 9;
-        const voucherHeight = 380 / 4;
-
-        ctx.drawImage(
-            img,
-            voucherData.pos.x * voucherWidth,
-            voucherData.pos.y * voucherHeight,
-            voucherWidth,
-            voucherHeight,
-            0,
-            0,
-            canvas.width,
-            canvas.height
-        );
-    };
-}
-
 function searchAndHighlight() {
     const searchInput = document.getElementById('searchInput');
     const searchTerms = searchInput.value.split(',')
         .map(term => term.trim().toLowerCase())
         .filter(term => term.length >= 4); // Filter out terms less than 4 letters
 
-    const queueItems = document.querySelectorAll('.queueItem, .packItem > div, .voucherContainer, .tagContainer, .bossContainer');
+    const queueItems = document.querySelectorAll('.queueItem, .packItem > div, .voucherContainer, .tagContainer, .sixthContainer, .bossContainer');
 
     queueItems.forEach(item => {
         const itemText = item.textContent.toLowerCase();
@@ -412,6 +253,14 @@ function searchAndHighlight() {
         } else {
             item.classList.remove('highlight');
         }
+    });
+
+    // Ante headers glow when anything inside the ante matches, even while collapsed
+    document.querySelectorAll('.queueContainer').forEach(box => {
+        const header = box.querySelector('.anteTitle');
+        if (!header) return;
+        const text = box.dataset.search || '';
+        header.classList.toggle('anteMatch', searchTerms.some(term => text.includes(term)));
     });
 }
 
@@ -497,6 +346,135 @@ function searchAndHighlight() {
         color: #ffffff;
     }
 
+    .collapsibleTitle {
+        margin-top: 12px;
+        cursor: pointer;
+        user-select: none;
+        display: inline-block;
+        padding: 4px 8px;
+        border: 1px solid #555555;
+        border-radius: 3px;
+        background-color: #3a3a3a;
+    }
+
+    .anteTitle {
+        display: block;
+        margin-top: 0;
+        font-size: 14px;
+        background-color: #444444;
+    }
+
+    .anteTitle.anteMatch {
+        box-shadow: inset 0 0 0 2px rgba(150, 237, 121, 0.6);
+    }
+
+    .collapsibleTitle:hover {
+        background-color: #4a4a4a;
+    }
+
+    .collapsibleTitle::before {
+        content: "▾";
+        display: inline-block;
+        width: 1em;
+        margin-right: 4px;
+    }
+
+    .collapsibleTitle.collapsed::before {
+        content: "▸";
+    }
+
+    /* Collapsible bodies set their own display (flex etc.), which would otherwise beat the UA hidden rule */
+    [hidden] {
+        display: none !important;
+    }
+
+    .clickable {
+        cursor: pointer;
+    }
+
+    .packControls {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 6px;
+    }
+
+    .smallButton {
+        font-size: 0.9em;
+        padding: 4px 10px;
+    }
+
+    .voucherContainer.clickable:hover,
+    .voucherTile.clickable:hover {
+        background-color: #3a3a3a;
+        border-radius: 3px;
+    }
+
+    .voucherContainer.owned,
+    .voucherTile.owned {
+        outline: 2px solid #96ed79;
+        border-radius: 3px;
+    }
+
+    .boughtLabel {
+        font-size: 10px;
+        color: #96ed79;
+    }
+
+    .voucherPanel {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 20px;
+        padding: 10px;
+        border: 1px solid #444444;
+        margin-bottom: 10px;
+    }
+
+    .voucherSection {
+        flex: 1 1 300px;
+    }
+
+    .voucherSectionTitle {
+        font-weight: bold;
+        margin-bottom: 6px;
+        color: #cccccc;
+    }
+
+    .voucherGrid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .voucherTile {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        font-size: 10px;
+        width: 80px;
+        padding: 4px;
+    }
+
+
+    .voucherTile.unavailable {
+        opacity: 0.35;
+    }
+
+    /* Visual break between shop frames in the queue */
+    .queueItem.frameStart {
+        border-left: 1px solid #666666;
+        padding-left: 8px;
+        margin-left: 4px;
+    }
+
+    /* Visual break between each set of 3 Sixth Sense rolls */
+    .sixthContainer.sixthSetStart {
+        border-left: 1px solid #666666;
+        padding-left: 8px;
+        margin-left: 4px;
+    }
+
     .queueInfo {
         display: flex;
         flex-wrap: wrap;
@@ -533,12 +511,21 @@ function searchAndHighlight() {
         color: #ffffff;
     }
 
-    .queueItem img {
-        width: 71px;
-        height: 95px;
+    .sprite {
+        position: relative;
         display: block;
-        margin: 0 auto;
+        margin: 0 auto 3px;
         pointer-events: none;
+        overflow: hidden;
+    }
+
+    .spriteLayer {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-repeat: no-repeat;
     }
 
     .queueItem div {
@@ -597,12 +584,6 @@ function searchAndHighlight() {
         margin-right: 5px;
     }
 
-    .packItem canvas {
-        width: 71px;
-        height: 95px;
-        margin-bottom: 3px;
-        pointer-events: none;
-    }
 
     .packItem .cardName {
         font-size: 10px;
@@ -632,7 +613,8 @@ function searchAndHighlight() {
         justify-content: center;
     }
 .voucherContainer,
-.tagContainer {
+.tagContainer,
+.sixthContainer {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -641,14 +623,10 @@ function searchAndHighlight() {
     margin-right: 5px;
 }
 
-.voucherContainer canvas,
-.tagContainer canvas {
-    margin-bottom: 3px;
-    pointer-events: none;
-}
 
 .voucherName,
-.tagName {
+.tagName,
+.sixthName {
     font-size: 10px;
     margin-bottom: 3px;
     word-wrap: break-word;
@@ -684,10 +662,6 @@ function searchAndHighlight() {
     margin-right: 5px;
 }
 
-.bossContainer canvas {
-    margin-bottom: 3px;
-    pointer-events: none;
-}
 
 .bossName {
     font-size: 10px;
@@ -744,16 +718,32 @@ function searchAndHighlight() {
                 const bossMatch = match.match(/Boss: (.+)/);
                 const voucherMatch = match.match(/Voucher: (.+)/);
                 const tagsMatch = match.match(/Tags: (.+)/);
-                const queueMatch = match.match(/Shop Queue:([\s\S]*?)(?=Packs:|$)/);
+                const sixthMatch = match.match(/Sixth Sense: (.+)/);
+                const generatorDefs = [
+                    { key: 'Judgement', label: 'Judgement' },
+                    { key: 'Cartomancer', label: 'Cartomancer' },
+                    { key: '8 Ball / Purple Seal', label: '8 Ball / Purple Seal' },
+                    { key: 'Emperor', label: 'Emperor' },
+                ];
+                const generators = [];
+                generatorDefs.forEach(def => {
+                    const genMatch = match.match(new RegExp(def.key.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&') + ': (.*)'));
+                    if (genMatch) {
+                        const cards = genMatch[1].trim() === '' ? [] : genMatch[1].trim().split(',').map(card => card.trim());
+                        generators.push({ label: def.label, cards });
+                    }
+                });
+                const queueMatch = match.match(/Shop Queue[^:\n]*:([\s\S]*?)(?=Packs:|$)/);
                 const packsMatch = match.match(/Packs:([\s\S]*?)(?=(?:==ANTE \d+==|$))/);
 
                 const boss = bossMatch ? bossMatch[1].trim() : '';
                 const voucher = voucherMatch ? voucherMatch[1].trim() : '';
                 const tags = tagsMatch ? tagsMatch[1].trim().split(',').map(tag => tag.trim()) : [];
+                const sixthSense = sixthMatch ? sixthMatch[1].trim().split(',').map(card => card.trim()) : [];
                 const queue = queueMatch ? queueMatch[1].trim().split('\n').filter(item => item.trim() !== '') : [];
                 const packs = packsMatch ? packsMatch[1].trim().split('\n').filter(item => item.trim() !== '') : [];
 
-                shopQueues.push({ title, queue, boss, voucher, tags, packs });
+                shopQueues.push({ title, queue, boss, voucher, tags, sixthSense, generators, packs, raw: match });
             });
         }
 
@@ -798,6 +788,92 @@ function searchAndHighlight() {
         }
     }
 
+    // Remembers which collapsible panels are open so a re-analysis doesn't close them.
+    const expandedPanels = new Set();
+
+    // Collapsible section. renderBody(body) runs once, the first time the panel is expanded.
+    function createCollapsible(parent, key, label, renderBody, titleClass) {
+        const title = document.createElement('div');
+        title.className = 'queueTitle collapsibleTitle' + (titleClass ? ' ' + titleClass : '');
+        title.textContent = label;
+        title.setAttribute('role', 'button');
+        title.tabIndex = 0;
+        parent.appendChild(title);
+
+        const body = document.createElement('div');
+        body.hidden = true;
+        parent.appendChild(body);
+
+        let rendered = false;
+        const setExpanded = (expanded) => {
+            if (expanded && !rendered) {
+                renderBody(body);
+                rendered = true;
+                searchAndHighlight();
+            }
+            body.hidden = !expanded;
+            title.classList.toggle('collapsed', !expanded);
+            title.setAttribute('aria-expanded', String(expanded));
+            if (expanded) expandedPanels.add(key); else expandedPanels.delete(key);
+        };
+        title.addEventListener('click', () => setExpanded(body.hidden));
+        title.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setExpanded(body.hidden);
+            }
+        });
+        setExpanded(expandedPanels.has(key));
+        return body;
+    }
+
+    function makeVoucherTile(name) {
+        const tile = document.createElement('div');
+        tile.className = 'voucherTile';
+
+        tile.appendChild(makeVoucherSprite(name));
+
+        const nameElement = document.createElement('div');
+        nameElement.textContent = name;
+        nameElement.classList.add('voucherName');
+        tile.appendChild(nameElement);
+
+        return tile;
+    }
+
+    // Build one card tile (sprite + name + modifiers + stickers) from a queue line like "3) Foil Blueprint"
+    function createQueueItem(item) {
+        const { cardName, itemModifiers, itemStickers } = parseCardItem(item);
+
+        const queueItem = document.createElement('div');
+        queueItem.className = 'queueItem';
+
+        const itemType = determineItemType(cardName);
+        queueItem.appendChild(itemType !== 'unknown'
+            ? makeCardSprite(cardName, itemType, itemModifiers, itemStickers)
+            : spriteStack(71, 95));
+
+        const itemText = document.createElement('div');
+        itemText.textContent = cardName;
+        queueItem.appendChild(itemText);
+
+        itemModifiers.forEach(mod => {
+            const modifierText = document.createElement('div');
+            modifierText.className = 'modifier';
+            modifierText.textContent = mod;
+            queueItem.appendChild(modifierText);
+        });
+
+        itemStickers.forEach(stick => {
+            const stickerText = document.createElement('div');
+            stickerText.className = 'sticker';
+            stickerText.textContent = stick;
+            queueItem.appendChild(stickerText);
+        });
+
+        return queueItem;
+    }
+
     // Function to create and display the side-scrolling list
     function displayShopQueues() {
         const textarea = document.getElementById('outputBox');
@@ -806,19 +882,27 @@ function searchAndHighlight() {
 
         scrollingContainer.innerHTML = ''; // Clear previous content
 
-        shopQueues.forEach(({ title, queue, boss, voucher, tags, packs }) => {
-            const queueContainer = document.createElement('div');
-            queueContainer.className = 'queueContainer';
+        shopQueues.forEach(({ title, queue, boss, voucher, tags, sixthSense, generators, packs, raw }) => {
+            const anteNum = parseInt((title.match(/\d+/) || ['0'])[0], 10);
+            const vs = window.voucherState;
+            const deckVouchers = vs ? vs.deckVouchers : [];
+            // Owned at this ante = granted by the deck, or marked bought in this ante or earlier
+            const isOwnedAt = (name) => deckVouchers.includes(name) || (vs && vs.purchases[name] !== undefined && vs.purchases[name] <= anteNum);
+            // Shop card slots: 2 base, +1 Overstock, +1 Overstock Plus
+            const shopSlots = 2 + (isOwnedAt('Overstock') ? 1 : 0) + (isOwnedAt('Overstock Plus') ? 1 : 0);
 
-            const queueTitle = document.createElement('div');
-            queueTitle.className = 'queueTitle';
-            queueTitle.textContent = title; // Display the original title with ANTE number
-            queueContainer.appendChild(queueTitle);
+            const anteBox = document.createElement('div');
+            anteBox.className = 'queueContainer';
+            anteBox.dataset.search = raw.toLowerCase();
+
+            // Whole ante is collapsible; its contents are only built on first expand.
+            const anteLabel = title.replace(/=/g, '').trim()
+                + (boss ? '  |  Boss: ' + boss : '')
+                + (voucher ? '  |  Voucher: ' + voucher : '');
+            createCollapsible(anteBox, title, anteLabel, (queueContainer) => {
 
             const queueInfo = document.createElement('div');
             queueInfo.className = 'queueInfo';
-
-
 
             const voucherElement = document.createElement('div');
             voucherElement.innerHTML = '<b><u>Voucher</u></b>';
@@ -827,16 +911,31 @@ function searchAndHighlight() {
                 const voucherContainer = document.createElement('div');
                 voucherContainer.className = 'voucherContainer';
 
-                const voucherCanvas = document.createElement('canvas');
-                voucherCanvas.width = 71;
-                voucherCanvas.height = 95;
-                renderVoucher(voucherCanvas, voucher);
-                voucherContainer.appendChild(voucherCanvas);
+                voucherContainer.appendChild(makeVoucherSprite(voucher));
 
                 const voucherNameElement = document.createElement('div');
                 voucherNameElement.textContent = voucher;
                 voucherNameElement.classList.add('voucherName');
                 voucherContainer.appendChild(voucherNameElement);
+
+                if (vs) {
+                    const bought = vs.purchases[voucher];
+                    voucherContainer.classList.add('clickable');
+                    voucherContainer.title = bought !== undefined
+                        ? 'Click to mark as not bought'
+                        : 'Click to mark as bought in this ante';
+                    if (bought !== undefined) {
+                        voucherContainer.classList.add('owned');
+                        const boughtLabel = document.createElement('div');
+                        boughtLabel.className = 'boughtLabel';
+                        boughtLabel.textContent = bought === anteNum ? 'Bought' : 'Bought ante ' + bought;
+                        voucherContainer.appendChild(boughtLabel);
+                    }
+                    voucherContainer.addEventListener('click', () => {
+                        if (vs.purchases[voucher] !== undefined) vs.unbuy(voucher);
+                        else vs.buy(voucher, anteNum);
+                    });
+                }
 
                 voucherElement.appendChild(voucherContainer);
             }
@@ -850,11 +949,7 @@ function searchAndHighlight() {
                 const bossContainer = document.createElement('div');
                 bossContainer.className = 'bossContainer';
 
-                const bossCanvas = document.createElement('canvas');
-                bossCanvas.width = 34;
-                bossCanvas.height = 34;
-                renderBoss(bossCanvas, boss);
-                bossContainer.appendChild(bossCanvas);
+                bossContainer.appendChild(makeBossSprite(boss));
 
                 const bossNameElement = document.createElement('div');
                 bossNameElement.textContent = boss;
@@ -877,11 +972,7 @@ function searchAndHighlight() {
                 const tagContainer = document.createElement('div');
                 tagContainer.className = 'tagContainer';
 
-                const tagCanvas = document.createElement('canvas');
-                tagCanvas.width = 34;
-                tagCanvas.height = 34;
-                renderTag(tagCanvas, tag);
-                tagContainer.appendChild(tagCanvas);
+                tagContainer.appendChild(makeTagSprite(tag));
 
                 const tagNameElement = document.createElement('div');
                 tagNameElement.textContent = tag;
@@ -892,50 +983,201 @@ function searchAndHighlight() {
             });
 
             tagsElement.appendChild(tagsContainer);
+
+            // Reveal tags beyond the game's default two, one at a time
+            const ts = window.tagState;
+            if (ts) {
+                const tagControls = document.createElement('div');
+                tagControls.className = 'packControls';
+
+                const moreBtn = document.createElement('button');
+                moreBtn.className = 'smallButton';
+                moreBtn.textContent = 'Reveal another tag';
+                moreBtn.addEventListener('click', () => ts.more(anteNum));
+                tagControls.appendChild(moreBtn);
+
+                const extra = ts.extra[anteNum] || 0;
+                if (extra > 0) {
+                    const extraNote = document.createElement('span');
+                    extraNote.className = 'modifier';
+                    extraNote.textContent = '+' + extra + ' extra';
+                    tagControls.appendChild(extraNote);
+
+                    const resetBtn = document.createElement('button');
+                    resetBtn.className = 'smallButton';
+                    resetBtn.textContent = 'Reset';
+                    resetBtn.addEventListener('click', () => ts.reset(anteNum));
+                    tagControls.appendChild(resetBtn);
+                }
+
+                tagsElement.appendChild(tagControls);
+            }
+
             queueInfo.appendChild(tagsElement);
+
+            if (sixthSense.length > 0) {
+                const sixthElement = document.createElement('div');
+                sixthElement.innerHTML = '<b><u>Sixth Sense</u></b>';
+                sixthElement.style = "font-size: 16px";
+
+                const sixthCardsContainer = document.createElement('div');
+                sixthCardsContainer.className = 'tagsContainer';
+
+                sixthSense.forEach((cardName, idx) => {
+                    const sixthContainer = document.createElement('div');
+                    sixthContainer.className = 'sixthContainer';
+
+                    sixthContainer.appendChild(determineItemType(cardName) !== 'unknown'
+                        ? makeCardSprite(cardName, 'tarot', [], [])
+                        : spriteStack(71, 95));
+
+                    const nameElement = document.createElement('div');
+                    nameElement.textContent = cardName;
+                    nameElement.classList.add('sixthName');
+                    sixthContainer.appendChild(nameElement);
+
+                    const roundElement = document.createElement('div');
+                    roundElement.textContent = 'Round ' + (idx + 1);
+                    if (idx % 3 === 0 && idx > 0) sixthContainer.classList.add('sixthSetStart');
+                    roundElement.classList.add('modifier');
+                    sixthContainer.appendChild(roundElement);
+
+                    sixthCardsContainer.appendChild(sixthContainer);
+                });
+
+                sixthElement.appendChild(sixthCardsContainer);
+
+                // Reveal another ante's worth (3) of Sixth Sense rolls
+                const ss = window.sixthState;
+                if (ss) {
+                    const sixthControls = document.createElement('div');
+                    sixthControls.className = 'packControls';
+
+                    const moreBtn = document.createElement('button');
+                    moreBtn.className = 'smallButton';
+                    moreBtn.textContent = 'Reveal 3 more';
+                    moreBtn.addEventListener('click', () => ss.more(anteNum));
+                    sixthControls.appendChild(moreBtn);
+
+                    const extra = ss.extra[anteNum] || 0;
+                    if (extra > 0) {
+                        const extraNote = document.createElement('span');
+                        extraNote.className = 'modifier';
+                        extraNote.textContent = '+' + (extra * 3) + ' extra';
+                        sixthControls.appendChild(extraNote);
+
+                        const resetBtn = document.createElement('button');
+                        resetBtn.className = 'smallButton';
+                        resetBtn.textContent = 'Reset';
+                        resetBtn.addEventListener('click', () => ss.reset(anteNum));
+                        sixthControls.appendChild(resetBtn);
+                    }
+
+                    sixthElement.appendChild(sixthControls);
+                }
+
+                queueInfo.appendChild(sixthElement);
+            }
 
             queueContainer.appendChild(queueInfo);
 
-            const scrollable = document.createElement('div');
-            scrollable.className = 'scrollable no-select';
-            queueContainer.appendChild(scrollable);
+            // Per-ante voucher ownership panel. Owned = bought in this ante or earlier.
+            if (vs) {
+                const pairs = vs.pairs;
+                const ownedCount = pairs.flat().filter(isOwnedAt).length;
 
-            queue.forEach(item => {
-                const { cardName, itemModifiers, itemStickers } = parseCardItem(item);
+                createCollapsible(queueContainer, title + ':vouchers', 'Vouchers (owned ' + ownedCount + ')', (body) => {
+                    body.className = 'voucherPanel';
 
-                const queueItem = document.createElement('div');
-                queueItem.className = 'queueItem';
+                    const makeSection = (heading) => {
+                        const section = document.createElement('div');
+                        section.className = 'voucherSection';
+                        const h = document.createElement('div');
+                        h.className = 'voucherSectionTitle';
+                        h.textContent = heading;
+                        section.appendChild(h);
+                        const grid = document.createElement('div');
+                        grid.className = 'voucherGrid';
+                        section.appendChild(grid);
+                        body.appendChild(section);
+                        return grid;
+                    };
+                    const ownedGrid = makeSection('Owned');
+                    const unownedGrid = makeSection('Unowned');
 
-                const canvas = document.createElement('canvas');
-                canvas.width = 71;
-                canvas.height = 95;
+                    pairs.forEach(([t1, t2]) => {
+                        [t1, t2].forEach((name, tier) => {
+                            const bought = vs.purchases[name];
+                            const fromDeck = deckVouchers.includes(name);
 
-                const itemType = determineItemType(cardName);
-                if (itemType !== 'unknown') {
-                    maskToCanvas(canvas, cardName, itemType, itemModifiers, itemStickers);
-                }
+                            const tile = makeVoucherTile(name);
+                            const note = document.createElement('div');
+                            note.className = 'modifier';
 
-                queueItem.appendChild(canvas);
+                            if (fromDeck) {
+                                tile.classList.add('owned');
+                                note.textContent = 'From deck';
+                                ownedGrid.appendChild(tile);
+                            } else if (isOwnedAt(name)) {
+                                tile.classList.add('owned', 'clickable');
+                                note.textContent = bought === anteNum ? 'Bought this ante' : 'Bought ante ' + bought;
+                                tile.title = 'Click to mark as not bought';
+                                tile.addEventListener('click', () => vs.unbuy(name));
+                                ownedGrid.appendChild(tile);
+                            } else {
+                                const prereqOk = tier === 0 || isOwnedAt(t1);
+                                if (prereqOk) {
+                                    tile.classList.add('clickable');
+                                    note.textContent = 'Click to buy';
+                                    tile.title = 'Click to mark as bought in this ante';
+                                    tile.addEventListener('click', () => vs.buy(name, anteNum));
+                                } else {
+                                    tile.classList.add('unavailable');
+                                    note.textContent = 'Needs ' + t1;
+                                }
+                                unownedGrid.appendChild(tile);
+                            }
+                            tile.appendChild(note);
+                        });
+                    });
 
-                const itemText = document.createElement('div');
-                itemText.textContent = cardName;
-                queueItem.appendChild(itemText);
-
-                itemModifiers.forEach(mod => {
-                    const modifierText = document.createElement('div');
-                    modifierText.className = 'modifier';
-                    modifierText.textContent = mod;
-                    queueItem.appendChild(modifierText);
+                    if (ownedGrid.children.length === 0) {
+                        const none = document.createElement('div');
+                        none.className = 'modifier';
+                        none.textContent = 'None';
+                        ownedGrid.appendChild(none);
+                    }
                 });
+            }
 
-                itemStickers.forEach(stick => {
-                    const stickerText = document.createElement('div');
-                    stickerText.className = 'sticker';
-                    stickerText.textContent = stick;
-                    queueItem.appendChild(stickerText);
+            // Shop queue, collapsed by default. Dividers mark each shop "frame" of
+            // shopSlots cards, so you can read the queue visit by visit.
+            const shopFrames = Math.ceil(queue.length / shopSlots);
+            createCollapsible(queueContainer, title + ':shop', 'Shop Queue (' + shopFrames + ' frames, ' + shopSlots + ' cards per frame)', (body) => {
+                const scrollable = document.createElement('div');
+                scrollable.className = 'scrollable no-select';
+                queue.forEach((item, idx) => {
+                    const tile = createQueueItem(item);
+                    if (idx > 0 && idx % shopSlots === 0) tile.classList.add('frameStart');
+                    scrollable.appendChild(tile);
                 });
+                body.appendChild(scrollable);
+                attachDragScroll(scrollable);
+            });
 
-                scrollable.appendChild(queueItem);
+            // Card generator rows (Judgement, Cartomancer, 8 Ball / Purple Seal, Emperor).
+            // Collapsed by default; tiles are only built the first time a row is expanded.
+            generators.forEach(({ label, cards }) => {
+                if (cards.length === 0) return;
+                createCollapsible(queueContainer, title + ':' + label, label + ' (' + cards.length + ')', (body) => {
+                    const generatorScrollable = document.createElement('div');
+                    generatorScrollable.className = 'scrollable no-select';
+                    cards.forEach((card, idx) => {
+                        generatorScrollable.appendChild(createQueueItem((idx + 1) + ') ' + card));
+                    });
+                    body.appendChild(generatorScrollable);
+                    attachDragScroll(generatorScrollable);
+                });
             });
 
             if (packs.length > 0) {
@@ -967,11 +1209,7 @@ function searchAndHighlight() {
                         const cardContainer = document.createElement('div');
 
                         if (itemType !== 'unknown') {
-                            const canvas = document.createElement('canvas');
-                            canvas.width = 71;
-                            canvas.height = 95;
-                            maskToCanvas(canvas, parsedCardName, itemType, itemModifiers, itemStickers);
-                            cardContainer.appendChild(canvas);
+                            cardContainer.appendChild(makeCardSprite(parsedCardName, itemType, itemModifiers, itemStickers));
 
                             const itemText = document.createElement('div');
                             itemText.textContent = parsedCardName;
@@ -994,11 +1232,7 @@ function searchAndHighlight() {
                         } else {
                             const { rank, suit, modifiers, seal } = parseStandardCardName(cardName);
 
-                            const canvas = document.createElement('canvas');
-                            canvas.width = 71;
-                            canvas.height = 95;
-                            renderStandardCard(canvas, rank, suit, modifiers, seal);
-                            cardContainer.appendChild(canvas);
+                            cardContainer.appendChild(makeStandardCardSprite(rank, suit, modifiers, seal));
 
                             const cardText = document.createElement('div');
                             cardText.textContent = getStandardCardName(cardName);
@@ -1028,53 +1262,85 @@ function searchAndHighlight() {
                     packsContainer.appendChild(packItem);
                 });
 
+                // Reveal packs beyond the game's default count, one at a time
+                const ps = window.packState;
+                if (ps) {
+                    const packControls = document.createElement('div');
+                    packControls.className = 'packControls';
 
+                    const moreBtn = document.createElement('button');
+                    moreBtn.className = 'smallButton';
+                    moreBtn.textContent = 'Reveal another pack';
+                    moreBtn.addEventListener('click', () => ps.more(anteNum));
+                    packControls.appendChild(moreBtn);
+
+                    const extra = ps.extra[anteNum] || 0;
+                    if (extra > 0) {
+                        const extraNote = document.createElement('span');
+                        extraNote.className = 'modifier';
+                        extraNote.textContent = '+' + extra + ' extra';
+                        packControls.appendChild(extraNote);
+
+                        const resetBtn = document.createElement('button');
+                        resetBtn.className = 'smallButton';
+                        resetBtn.textContent = 'Reset';
+                        resetBtn.addEventListener('click', () => ps.reset(anteNum));
+                        packControls.appendChild(resetBtn);
+                    }
+
+                    queueContainer.appendChild(packControls);
+                }
             }
 
+            }, 'anteTitle');
 
-            scrollingContainer.appendChild(queueContainer);
+            scrollingContainer.appendChild(anteBox);
         });
 
         // Add draggable scrolling functionality
-        document.querySelectorAll('.scrollable').forEach(scrollable => {
-            let isDown = false;
-            let startX;
-            let scrollLeft;
-
-            scrollable.addEventListener('mousedown', (e) => {
-                isDown = true;
-                scrollable.classList.add('active');
-                startX = e.pageX - scrollable.offsetLeft;
-                scrollLeft = scrollable.scrollLeft;
-                scrollable.classList.add('no-select');
-            });
-
-            scrollable.addEventListener('mouseleave', () => {
-                isDown = false;
-                scrollable.classList.remove('active');
-                scrollable.classList.remove('no-select');
-            });
-
-            scrollable.addEventListener('mouseup', () => {
-                isDown = false;
-                scrollable.classList.remove('active');
-                scrollable.classList.remove('no-select');
-            });
-
-            scrollable.addEventListener('mousemove', (e) => {
-                if (!isDown) return;
-                e.preventDefault();
-                const x = e.pageX - scrollable.offsetLeft;
-                const walk = x - startX; // One-to-one scroll
-                scrollable.scrollLeft = scrollLeft - walk;
-            });
-        });
+        document.querySelectorAll('.scrollable').forEach(attachDragScroll);
         searchAndHighlight();
     }
 
+    function attachDragScroll(scrollable) {
+        if (scrollable.dataset.dragScroll) return;
+        scrollable.dataset.dragScroll = '1';
 
-    // Add event listener to the "Analyze" button
-    document.getElementById('analyzeButton').addEventListener('click', displayShopQueues);
+        let isDown = false;
+        let startX;
+        let scrollLeft;
+
+        scrollable.addEventListener('mousedown', (e) => {
+            isDown = true;
+            scrollable.classList.add('active');
+            startX = e.pageX - scrollable.offsetLeft;
+            scrollLeft = scrollable.scrollLeft;
+            scrollable.classList.add('no-select');
+        });
+
+        scrollable.addEventListener('mouseleave', () => {
+            isDown = false;
+            scrollable.classList.remove('active');
+            scrollable.classList.remove('no-select');
+        });
+
+        scrollable.addEventListener('mouseup', () => {
+            isDown = false;
+            scrollable.classList.remove('active');
+            scrollable.classList.remove('no-select');
+        });
+
+        scrollable.addEventListener('mousemove', (e) => {
+            if (!isDown) return;
+            e.preventDefault();
+            const x = e.pageX - scrollable.offsetLeft;
+            const walk = x - startX; // One-to-one scroll
+            scrollable.scrollLeft = scrollLeft - walk;
+        });
+    }
+
+    // Re-render whenever index.html finishes an analysis (Analyze button, URL load, voucher toggles)
+    document.addEventListener('analysisComplete', displayShopQueues);
 
     // Initialize the display
     displayShopQueues();
