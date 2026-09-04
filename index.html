@@ -92,6 +92,24 @@
       resize: vertical;
     }
 
+    .genGroup {
+      text-align: left;
+      margin: 6px auto;
+      max-width: 420px;
+    }
+    .genGroup summary {
+      cursor: pointer;
+      font-size: 1.1em;
+    }
+    .genGroup label {
+      display: inline-block;
+      min-width: 220px;
+      font-size: 1em;
+    }
+    .genGroup input {
+      width: 70px;
+    }
+
     /* Change the font and background color */
     select {
       font-family: "m6x11", sans-serif;
@@ -229,21 +247,14 @@
         <label for="framesPerAnte">Shop Frames per Ante:</label>
         <input type="text" id="framesPerAnte" value = "5,10,15,20,25,30,35,40,45,50,55,60,65,70,75,80,85,90,95,100,105,110,115,120,125,130,135,140,145,150,155,160,165,170,175,180,185,190" required>
         <br>
-        <label for="judgementCount">Judgement Jokers:</label>
-        <input type="number" id="judgementCount" min="0" max="999" value="10" required>
-        <br>
-        <label for="riffRaffCount">Riff-Raff Jokers:</label>
-        <input type="number" id="riffRaffCount" min="0" max="999" value="6" required>
-        <br>
-        <label for="cartomancerCount">Cartomancer Tarots:</label>
-        <input type="number" id="cartomancerCount" min="0" max="999" value="20" required>
-        <br>
-        <label for="eightBallCount">8 Ball / Purple Seal Tarots:</label>
-        <input type="number" id="eightBallCount" min="0" max="999" value="20" required>
-        <br>
-        <label for="emperorCount">Emperor Tarots:</label>
-        <input type="number" id="emperorCount" min="0" max="999" value="20" required>
-        <br>
+        <details class="genGroup">
+          <summary>Joker Generation (count per ante)</summary>
+          <div id="jokerGenInputs"></div>
+        </details>
+        <details class="genGroup">
+          <summary>Consumable Generation (count per ante)</summary>
+          <div id="consumableGenInputs"></div>
+        </details>
         <label for="deck">Deck:</label>
         <select id="deck" required>
           <option value="Red Deck">Red Deck</option>
@@ -308,6 +319,48 @@
     </div>
   </body>
   <script>
+    // Every Joker / consumable generation source the analyzer surfaces, besides the shop,
+    // packs, and Sixth Sense (which has its own trigger-based display). Each `source` is the
+    // append key Balatro passes to create_card, so each one is its own per-ante RNG stream.
+    //   kind: joker (rarity polled or forced by source), tarot, spectral, planet
+    //   param: URL query parameter for the per-ante count (kept stable for old links)
+    //   input: id of the count input in the settings form
+    const GENERATORS = [
+      // --- Joker Generation ---
+      { group: 'joker', kind: 'joker', source: 'jud', label: 'Judgement',    param: 'judgement',   input: 'judgementCount',   def: 10, hint: 'Tarot: creates a random Joker' },
+      { group: 'joker', kind: 'joker', source: 'rif', label: 'Riff-Raff',    param: 'riffRaff',    input: 'riffRaffCount',    def: 6,  hint: '2 Common Jokers per blind selected' },
+      { group: 'joker', kind: 'joker', source: 'sou', label: 'The Soul',     param: 'soul',        input: 'soulCount',        def: 5,  hint: 'Legendary pool is run-wide: Nth Soul used in the run, edition rolled per ante' },
+      { group: 'joker', kind: 'joker', source: 'wra', label: 'Wraith',       param: 'wraith',      input: 'wraithCount',      def: 5,  hint: 'Spectral: creates a random Rare Joker' },
+      { group: 'joker', kind: 'joker', source: 'rta', label: 'Rare Tag',     param: 'rareTag',     input: 'rareTagCount',     def: 3,  hint: 'Next shop has a free Rare Joker' },
+      { group: 'joker', kind: 'joker', source: 'uta', label: 'Uncommon Tag', param: 'uncommonTag', input: 'uncommonTagCount', def: 3,  hint: 'Next shop has a free Uncommon Joker' },
+      { group: 'joker', kind: 'joker', source: 'top', label: 'Top-up Tag',   param: 'topUpTag',    input: 'topUpTagCount',    def: 6,  hint: 'Creates up to 2 Common Jokers' },
+      // --- Consumable Generation ---
+      { group: 'consumable', kind: 'tarot',    source: 'car', label: 'Cartomancer',         param: 'cartomancer',   input: 'cartomancerCount',   def: 20, hint: 'Tarot when a blind is selected' },
+      { group: 'consumable', kind: 'tarot',    source: '8ba', label: '8 Ball / Purple Seal', param: 'eightBall',     input: 'eightBallCount',     def: 20, hint: 'Shared stream: 1 in 4 per 8 scored, or Purple Seal discarded' },
+      { group: 'consumable', kind: 'tarot',    source: 'emp', label: 'Emperor',             param: 'emperor',       input: 'emperorCount',       def: 20, hint: 'Tarot: creates 2 random Tarots' },
+      { group: 'consumable', kind: 'tarot',    source: 'van', label: 'Vagabond',            param: 'vagabond',      input: 'vagabondCount',      def: 10, hint: 'Tarot when a hand is played with $4 or less' },
+      { group: 'consumable', kind: 'tarot',    source: 'sup', label: 'Superposition',       param: 'superposition', input: 'superpositionCount', def: 10, hint: 'Tarot when a Straight containing an Ace is played' },
+      { group: 'consumable', kind: 'tarot',    source: 'hal', label: 'Hallucination',       param: 'hallucination', input: 'hallucinationCount', def: 10, hint: '1 in 2 chance of a Tarot when a Booster Pack is opened' },
+      { group: 'consumable', kind: 'spectral', source: 'sea', label: 'Seance',              param: 'seance',        input: 'seanceCount',        def: 10, hint: 'Spectral when a Straight Flush is played' },
+      { group: 'consumable', kind: 'planet',   source: 'pri', label: 'High Priestess',      param: 'highPriestess', input: 'highPriestessCount', def: 10, hint: 'Tarot: creates 2 random Planets' },
+    ];
+    window.GENERATORS = GENERATORS;
+
+    // Build the count inputs for the two collapsible settings groups.
+    GENERATORS.forEach(g => {
+      const holder = document.getElementById(g.group === 'joker' ? 'jokerGenInputs' : 'consumableGenInputs');
+      const label = document.createElement('label');
+      label.htmlFor = g.input;
+      label.textContent = g.label + ':';
+      label.title = g.hint;
+      const input = document.createElement('input');
+      input.type = 'number'; input.id = g.input; input.min = 0; input.max = 999; input.value = g.def; input.required = true;
+      input.title = g.hint;
+      holder.appendChild(label);
+      holder.appendChild(input);
+      holder.appendChild(document.createElement('br'));
+    });
+
     //Unlocks stuff
     // Option values
     const options = ["Negative Tag",
@@ -481,7 +534,7 @@
       more: function(ante) { extraTags[ante] = (extraTags[ante] || 0) + 1; performAnalysis(); },
       reset: function(ante) { delete extraTags[ante]; performAnalysis(); }
     };
-    // Extra Sixth Sense rounds revealed per ante (ante -> extra sets of 3, for
+    // Extra Sixth Sense triggers revealed per ante (ante -> extra sets of 3, for
     // replaying an ante after Hieroglyph/Petroglyph).
     var extraSixth = {};
     window.sixthState = {
@@ -517,15 +570,121 @@
       }
     };
 
+    // ---- Deck tracking + draw order ----
+    // Balatro shuffles the whole deck at run start and at the start of every blind
+    // (CardArea:shuffle('nr'..ante)), so each round's draw order is a fixed permutation of
+    // whatever the deck holds at that moment. Plays and discards never change what comes
+    // next; only adding or removing cards does. Deck changes are recorded as ops that take
+    // effect from a given (ante, round) and are kept in localStorage per seed + deck. They
+    // are deliberately not part of the share link.
+    // Two calibration switches, to lock against a real run on a known seed:
+    const DRAW_RUN_START_SHUFFLE = true; // start_run shuffles once ('nr1') before the first blind shuffles again
+    const DRAW_FROM_END = true;          // cards are dealt from the end of the shuffled list
+    var deckOps = [];        // { type:'add', id, name, ante, round, seq } | { type:'remove', target, ante, round, seq }
+    var deckRounds = {};     // ante -> [{ hand, cards: [{ id, name }] }], rebuilt by performAnalysis
+    var extraRounds = {};    // ante -> extra rounds revealed (replaying an ante after Hieroglyph/Petroglyph)
+    var deckHandAdjust = 0;  // manual hand-size tweak (Juggler, Stuntman, Turtle Bean, ...)
+    var deckSeq = 0;
+    var deckStoreKey = null;
+
+    function cardCodeToName(code) {
+      const ranks = { T: "10", J: "Jack", Q: "Queen", K: "King", A: "Ace" };
+      const suits = { C: "Clubs", D: "Diamonds", H: "Hearts", S: "Spades" };
+      return (ranks[code[2]] || code[2]) + " of " + suits[code[0]];
+    }
+
+    // Starting deck in sort_id order. start_run builds one proto per entry of G.P_CARDS
+    // (dropping faces for Abandoned, remapping C->S and D->H for Checkered, or 52 seeded
+    // picks for Erratic), then table.sort()s them by suit..rank string before creating the
+    // cards, so creation order is plain string order of the "S_R" codes.
+    function startingDeck(inst, deck) {
+      var protos = [];
+      if (deck == "Erratic Deck") {
+        for (let i = 0; i < 52; i++) protos.push(Immolate.CARDS.get(inst.randint("erratic", 0, 51)));
+      } else {
+        for (let i = 0; i < Immolate.CARDS.size(); i++) {
+          var c = Immolate.CARDS.get(i);
+          if (deck == "Abandoned Deck" && "JQK".includes(c[2])) continue;
+          if (deck == "Checkered Deck") c = (c[0] == "C" ? "S" : c[0] == "D" ? "H" : c[0]) + c.slice(1);
+          protos.push(c);
+        }
+      }
+      protos.sort();
+      return protos;
+    }
+
+    // Deck contents when round r of ante a is shuffled: starting cards plus added cards
+    // (in acquisition order, which is what sort_id follows), minus removed ones.
+    function deckAt(startCards, a, r) {
+      const eff = (op) => op.ante < a || (op.ante == a && op.round <= r);
+      var cards = startCards.map((code, i) => ({ id: 's' + i, name: cardCodeToName(code) }));
+      deckOps.filter(op => op.type == 'add' && eff(op))
+        .sort((x, y) => (x.ante - y.ante) || (x.round - y.round) || (x.seq - y.seq))
+        .forEach(op => cards.push({ id: op.id, name: op.name }));
+      var removed = new Set(deckOps.filter(op => op.type == 'remove' && eff(op)).map(op => op.target));
+      return cards.filter(c => !removed.has(c.id));
+    }
+
+    function saveDeckState() {
+      try {
+        localStorage.setItem(deckStoreKey, JSON.stringify({ ops: deckOps, handAdjust: deckHandAdjust, extraRounds: extraRounds, seq: deckSeq }));
+      } catch (e) { /* storage unavailable: state lives for this page only */ }
+    }
+    function loadDeckState(seed, deck) {
+      var key = 'theSoulDeck:' + seed + ':' + deck;
+      if (key == deckStoreKey) return;
+      deckStoreKey = key;
+      deckOps.length = 0; deckHandAdjust = 0; deckSeq = 0;
+      Object.keys(extraRounds).forEach(k => delete extraRounds[k]);
+      try {
+        var st = JSON.parse(localStorage.getItem(key));
+        if (st) {
+          (st.ops || []).forEach(o => deckOps.push(o));
+          deckHandAdjust = st.handAdjust || 0;
+          Object.assign(extraRounds, st.extraRounds || {});
+          deckSeq = st.seq || 0;
+        }
+      } catch (e) { /* corrupt or missing entry: start clean */ }
+    }
+    function deckChanged() { saveDeckState(); performAnalysis(); }
+
+    window.deckState = {
+      rounds: deckRounds,
+      ops: deckOps,
+      extra: extraRounds,
+      get handAdjust() { return deckHandAdjust; },
+      setHandAdjust: function(n) { deckHandAdjust = Math.max(-7, Math.min(20, parseInt(n, 10) || 0)); deckChanged(); },
+      // Card joins the deck from round `round` of ante `ante` (e.g. bought after the Small Blind -> round 2).
+      add: function(name, ante, round) {
+        deckSeq++;
+        deckOps.push({ type: 'add', id: 'c' + deckSeq, name: name, ante: ante, round: round, seq: deckSeq });
+        deckChanged();
+      },
+      // Card leaves the deck from round `round` of ante `ante` (destroyed during the round before).
+      remove: function(id, name, ante, round) {
+        deckSeq++;
+        deckOps.push({ type: 'remove', target: id, name: name, ante: ante, round: round, seq: deckSeq });
+        deckChanged();
+      },
+      undo: function(seq) {
+        var idx = deckOps.findIndex(op => op.seq == seq);
+        if (idx < 0) return;
+        var op = deckOps[idx];
+        deckOps.splice(idx, 1);
+        // Dropping an added card also drops any removal recorded against it.
+        if (op.type == 'add') for (let i = deckOps.length - 1; i >= 0; i--) if (deckOps[i].type == 'remove' && deckOps[i].target == op.id) deckOps.splice(i, 1);
+        deckChanged();
+      },
+      clear: function() { deckOps.length = 0; deckHandAdjust = 0; Object.keys(extraRounds).forEach(k => delete extraRounds[k]); deckChanged(); },
+      moreRounds: function(ante) { extraRounds[ante] = (extraRounds[ante] || 0) + 1; deckChanged(); },
+      resetRounds: function(ante) { delete extraRounds[ante]; deckChanged(); }
+    };
+
     instantAnalysis = false;
 
     const anteInput = document.getElementById('ante');
     const framesPerAnteInput = document.getElementById('framesPerAnte');
-    const judgementInput = document.getElementById('judgementCount');
-    const riffRaffInput = document.getElementById('riffRaffCount');
-    const cartomancerInput = document.getElementById('cartomancerCount');
-    const eightBallInput = document.getElementById('eightBallCount');
-    const emperorInput = document.getElementById('emperorCount');
+    GENERATORS.forEach(g => { g.el = document.getElementById(g.input); });
     const deckSelect = document.getElementById('deck');
     const stakeSelect = document.getElementById('stake');
     const versionSelect = document.getElementById('version');
@@ -566,11 +725,7 @@
       // Add non-default input values as URL parameters
       if (anteInput.value !== '38') params.append('ante', anteInput.value);
       if (framesPerAnteInput.value !== defaultFrames(38)) params.append('framesPerAnte', framesPerAnteInput.value);
-      if (judgementInput.value !== '10') params.append('judgement', judgementInput.value);
-      if (riffRaffInput.value !== '6') params.append('riffRaff', riffRaffInput.value);
-      if (cartomancerInput.value !== '20') params.append('cartomancer', cartomancerInput.value);
-      if (eightBallInput.value !== '20') params.append('eightBall', eightBallInput.value);
-      if (emperorInput.value !== '20') params.append('emperor', emperorInput.value);
+      GENERATORS.forEach(g => { if (g.el.value !== String(g.def)) params.append(g.param, g.el.value); });
       if (deckSelect.value !== 'Red Deck') params.append('deck', deckSelect.value);
       if (stakeSelect.value !== 'White Stake') params.append('stake', stakeSelect.value);
       if (versionSelect.value != '10106') params.append('version', versionSelect.value);
@@ -620,11 +775,7 @@
       const ante = parseInt(anteInput.value, 10);
       const framesPerAnte = framesPerAnteInput.value.split(',').map(Number);
       const clampCount = (v) => Math.max(0, Math.min(999, parseInt(v, 10) || 0));
-      const judgementCount = clampCount(judgementInput.value);
-      const riffRaffCount = clampCount(riffRaffInput.value);
-      const cartomancerCount = clampCount(cartomancerInput.value);
-      const eightBallCount = clampCount(eightBallInput.value);
-      const emperorCount = clampCount(emperorInput.value);
+      GENERATORS.forEach(g => { g.count = clampCount(g.el.value); });
       const deck = deckSelect.value;
       const stake = stakeSelect.value;
       const version = parseInt(versionSelect.value);
@@ -663,6 +814,9 @@
       inst.setStake(stake);
       inst.setDeck(deck);
       var ghostDeck = (deck == "Ghost Deck");
+      loadDeckState(seed, deck);
+      var startCards = startingDeck(inst, deck);
+      Object.keys(deckRounds).forEach(k => delete deckRounds[k]);
       var pairs = voucherPairs();
       (DECK_VOUCHERS[deck] || []).forEach(dv => {
         for (const [t1, t2] of pairs) {
@@ -693,7 +847,7 @@
         for (let t = 0; t < numTags; t++) tagList.push(inst.nextTag(a));
         output += "Tags: " + tagList.join(", ") + "\n";
 
-        // Sixth Sense: one Spectral per round (3 rounds per ante). Uses the
+        // Sixth Sense: one Spectral per trigger, at most once per round (first hand a lone 6), so 3 per ante. Uses the
         // game's "sixth" source key, so it doesn't disturb any other RNG stream.
         var sixthSense = [];
         var numSixth = 3 * (1 + (extraSixth[a] || 0));
@@ -702,46 +856,56 @@
         }
         output += "Sixth Sense: " + sixthSense.join(", ") + "\n";
 
-        // Judgement: creates a Joker using the game's "jud" source key.
-        // Jokers created this way can have an edition but never stake stickers.
-        var judgement = [];
-        for (let i = 0; i < judgementCount; i++) {
-          var jkr = inst.nextJoker("jud", a, false);
-          var name = "";
-          if (jkr.edition != "No Edition") name += jkr.edition + " ";
-          name += jkr.joker;
-          judgement.push(name);
-          jkr.delete();
+        // Joker / consumable generators, one line per source (see GENERATORS).
+        // Each source key is its own per-ante RNG stream, so generating them here
+        // does not disturb the shop, pack, or tag streams.
+        //   - Jokers created outside the shop never get stake stickers. Rare/Uncommon Tag
+        //     Jokers do land in the shop, but their sticker poll shares the shop's
+        //     "etperpoll" stream, so it is left off to keep the shop queue stable.
+        //   - The Soul's Legendary pool (1.0.1+) is one run-wide stream, key "Joker4".
+        //     It is reset each ante so every ante lists the 1st, 2nd, ... Soul used in
+        //     the run, while the edition roll ("edisou" + ante) stays per ante.
+        GENERATORS.forEach(g => {
+          var cards = [];
+          if (g.source == "sou") inst.resetNode("Joker4");
+          for (let i = 0; i < g.count; i++) {
+            if (g.kind == "joker") {
+              var jkr = inst.nextJoker(g.source, a, false);
+              var name = "";
+              if (jkr.edition != "No Edition") name += jkr.edition + " ";
+              name += jkr.joker;
+              cards.push(name);
+              jkr.delete();
+            } else if (g.kind == "tarot") {
+              cards.push(inst.nextTarot(g.source, a, false));
+            } else if (g.kind == "spectral") {
+              cards.push(inst.nextSpectral(g.source, a, false));
+            } else if (g.kind == "planet") {
+              cards.push(inst.nextPlanet(g.source, a, false));
+            }
+          }
+          output += g.label + ": " + cards.join(", ") + "\n";
+        });
+
+        // Draw order for each round of this ante. Hand size: 8, +2 Painted Deck,
+        // +1 each for Paint Brush and Palette once bought, plus the manual adjustment.
+        var handSize = 8 + (deck == "Painted Deck" ? 2 : 0)
+          + (ownedNow.includes("Paint Brush") ? 1 : 0) + (ownedNow.includes("Palette") ? 1 : 0) + deckHandAdjust;
+        if (a == 1 && DRAW_RUN_START_SHUFFLE) { var startPerm = inst.nextShuffle(1, startCards.length); startPerm.delete(); }
+        var numRounds = 3 + (extraRounds[a] || 0);
+        var anteRounds = [];
+        output += "Draw Order (hand " + handSize + "):\n";
+        for (let r = 1; r <= numRounds; r++) {
+          var deckCards = deckAt(startCards, a, r);
+          var perm = inst.nextShuffle(a, deckCards.length);
+          var ordered = [];
+          for (let i = 0; i < perm.size(); i++) ordered.push(deckCards[perm.get(i)]);
+          perm.delete();
+          if (!DRAW_FROM_END) ordered.reverse();
+          anteRounds.push({ hand: handSize, cards: ordered });
+          output += "Round " + r + " [" + ordered.length + "]: " + ordered.map(c => c.name).join(", ") + "\n";
         }
-        output += "Judgement: " + judgement.join(", ") + "\n";
-
-        // Riff-Raff: creates 2 Common Jokers when a blind is selected (up to 6 per
-        // ante over 3 blinds) using the game's "rif" source key. Rarity is forced
-        // to Common, so only the "Joker1rif" pool and the edition stream are polled.
-        var riffRaff = [];
-        for (let i = 0; i < riffRaffCount; i++) {
-          var rjkr = inst.nextJoker("rif", a, false);
-          var rname = "";
-          if (rjkr.edition != "No Edition") rname += rjkr.edition + " ";
-          rname += rjkr.joker;
-          riffRaff.push(rname);
-          rjkr.delete();
-        }
-        output += "Riff-Raff: " + riffRaff.join(", ") + "\n";
-
-        // Tarot generators. Each source key is its own RNG stream.
-        // 8 Ball and Purple Seal share the "8ba" key in the game.
-        var cartomancer = [];
-        for (let i = 0; i < cartomancerCount; i++) cartomancer.push(inst.nextTarot("car", a, false));
-        output += "Cartomancer: " + cartomancer.join(", ") + "\n";
-
-        var eightBall = [];
-        for (let i = 0; i < eightBallCount; i++) eightBall.push(inst.nextTarot("8ba", a, false));
-        output += "8 Ball / Purple Seal: " + eightBall.join(", ") + "\n";
-
-        var emperor = [];
-        for (let i = 0; i < emperorCount; i++) emperor.push(inst.nextTarot("emp", a, false));
-        output += "Emperor: " + emperor.join(", ") + "\n";
+        deckRounds[a] = anteRounds;
 
         // Shop slots at this ante: 2 base, +1 Overstock, +1 Overstock Plus.
         // A voucher counts once bought in this ante or earlier, or granted by the deck.
@@ -871,11 +1035,6 @@
       const urlStake = urlParams.get('stake');
       const urlVersion = urlParams.get('version');
       const urlUnlocks = urlParams.get('unlocks');
-      const urlJudgement = urlParams.get('judgement');
-      const urlRiffRaff = urlParams.get('riffRaff');
-      const urlCartomancer = urlParams.get('cartomancer');
-      const urlEightBall = urlParams.get('eightBall');
-      const urlEmperor = urlParams.get('emperor');
       const urlVouchers = urlParams.get('vouchers');
       const urlExtraPacks = urlParams.get('extraPacks');
       const urlExtraTags = urlParams.get('extraTags');
@@ -914,11 +1073,10 @@
       const clampCountField = (input, value) => {
         input.value = Math.max(0, Math.min(999, parseInt(value, 10) || 0));
       };
-      if (urlJudgement !== null) clampCountField(document.getElementById('judgementCount'), urlJudgement);
-      if (urlRiffRaff !== null) clampCountField(document.getElementById('riffRaffCount'), urlRiffRaff);
-      if (urlCartomancer !== null) clampCountField(document.getElementById('cartomancerCount'), urlCartomancer);
-      if (urlEightBall !== null) clampCountField(document.getElementById('eightBallCount'), urlEightBall);
-      if (urlEmperor !== null) clampCountField(document.getElementById('emperorCount'), urlEmperor);
+      GENERATORS.forEach(g => {
+        const v = urlParams.get(g.param);
+        if (v !== null) clampCountField(document.getElementById(g.input), v);
+      });
 
       if (urlUnlocks) {
         // Decode the base64 string

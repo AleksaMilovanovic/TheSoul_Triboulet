@@ -372,6 +372,86 @@ function searchAndHighlight() {
         background-color: #4a4a4a;
     }
 
+    /* Joker / Consumable Generation groups: indent the per-source rows inside */
+    .generatorGroupTitle {
+        display: block;
+        margin-top: 14px;
+        background-color: #2f3f33;
+        border-color: #5a7a62;
+    }
+    .generatorGroupTitle:hover {
+        background-color: #3a4f40;
+    }
+    .generatorGroup {
+        margin-left: 16px;
+        padding-left: 10px;
+        border-left: 1px solid #555555;
+    }
+
+    /* Deck & Draw Order panel */
+    .deckPanel {
+        margin-left: 16px;
+        padding-left: 10px;
+        border-left: 1px solid #555555;
+    }
+    .deckControls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        margin: 8px 0;
+        font-size: 12px;
+    }
+    .deckControls select, .deckHandInput {
+        font-size: 12px;
+    }
+    .deckHandInput {
+        width: 50px;
+        margin-left: 4px;
+    }
+    .deckNote {
+        font-size: 11px;
+        margin-bottom: 6px;
+        max-width: 700px;
+    }
+    .deckOps {
+        font-size: 11px;
+        color: #cccccc;
+        margin-bottom: 6px;
+    }
+    .deckOps > div {
+        margin: 2px 0;
+    }
+    .deckCard {
+        display: inline-block;
+        text-align: center;
+        margin-right: 6px;
+        padding: 3px;
+        font-size: 10px;
+        white-space: normal;
+        color: #ffffff;
+        width: 71px;
+        border-radius: 3px;
+        flex-shrink: 0;
+    }
+    .deckCard.inHand {
+        background-color: rgba(150, 237, 121, 0.18);
+        box-shadow: inset 0 0 0 1px rgba(150, 237, 121, 0.5);
+    }
+    .deckCard.clickable:hover {
+        background-color: #3a3a3a;
+    }
+    .deckPos {
+        font-weight: bold;
+        color: #ffffff;
+    }
+    .deckAddMenu {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        margin-top: 4px;
+    }
+
     .collapsibleTitle::before {
         content: "▾";
         display: inline-block;
@@ -719,19 +799,15 @@ function searchAndHighlight() {
                 const voucherMatch = match.match(/Voucher: (.+)/);
                 const tagsMatch = match.match(/Tags: (.+)/);
                 const sixthMatch = match.match(/Sixth Sense: (.+)/);
-                const generatorDefs = [
-                    { key: 'Judgement', label: 'Judgement' },
-                    { key: 'Riff-Raff', label: 'Riff-Raff' },
-                    { key: 'Cartomancer', label: 'Cartomancer' },
-                    { key: '8 Ball / Purple Seal', label: '8 Ball / Purple Seal' },
-                    { key: 'Emperor', label: 'Emperor' },
-                ];
+                // Generator rows are defined once in index.html (window.GENERATORS); each
+                // shows up in the output as a "Label: a, b, c" line.
+                const generatorDefs = (window.GENERATORS || []).map(g => ({ key: g.label, label: g.label, group: g.group, hint: g.hint }));
                 const generators = [];
                 generatorDefs.forEach(def => {
-                    const genMatch = match.match(new RegExp(def.key.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&') + ': (.*)'));
+                    const genMatch = match.match(new RegExp('^' + def.key.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&') + ': (.*)', 'm'));
                     if (genMatch) {
                         const cards = genMatch[1].trim() === '' ? [] : genMatch[1].trim().split(',').map(card => card.trim());
-                        generators.push({ label: def.label, cards });
+                        generators.push({ label: def.label, group: def.group, hint: def.hint, cards });
                     }
                 });
                 const queueMatch = match.match(/Shop Queue[^:\n]*:([\s\S]*?)(?=Packs:|$)/);
@@ -791,9 +867,11 @@ function searchAndHighlight() {
 
     // Remembers which collapsible panels are open so a re-analysis doesn't close them.
     const expandedPanels = new Set();
+    // Panels that default to open remember an explicit collapse the same way.
+    const collapsedPanels = new Set();
 
     // Collapsible section. renderBody(body) runs once, the first time the panel is expanded.
-    function createCollapsible(parent, key, label, renderBody, titleClass) {
+    function createCollapsible(parent, key, label, renderBody, titleClass, defaultOpen) {
         const title = document.createElement('div');
         title.className = 'queueTitle collapsibleTitle' + (titleClass ? ' ' + titleClass : '');
         title.textContent = label;
@@ -815,7 +893,8 @@ function searchAndHighlight() {
             body.hidden = !expanded;
             title.classList.toggle('collapsed', !expanded);
             title.setAttribute('aria-expanded', String(expanded));
-            if (expanded) expandedPanels.add(key); else expandedPanels.delete(key);
+            if (expanded) { expandedPanels.add(key); collapsedPanels.delete(key); }
+            else { expandedPanels.delete(key); collapsedPanels.add(key); }
         };
         title.addEventListener('click', () => setExpanded(body.hidden));
         title.addEventListener('keydown', (e) => {
@@ -824,8 +903,56 @@ function searchAndHighlight() {
                 setExpanded(body.hidden);
             }
         });
-        setExpanded(expandedPanels.has(key));
+        setExpanded(expandedPanels.has(key) || (!!defaultOpen && !collapsedPanels.has(key)));
         return body;
+    }
+
+    const CARD_SUITS = ['Spades', 'Hearts', 'Clubs', 'Diamonds'];
+    const CARD_RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'Jack', 'Queen', 'King', 'Ace'];
+    const CARD_ENHANCEMENTS = ['', 'Bonus', 'Mult', 'Wild', 'Glass', 'Steel', 'Stone', 'Gold', 'Lucky'];
+
+    // One card in a round's draw order: sprite, position, and whether it is in the opening hand.
+    function makeDeckCardTile(card, pos, inHand) {
+        const tile = document.createElement('div');
+        tile.className = 'deckCard' + (inHand ? ' inHand' : '');
+        const parsed = parseStandardCardName(card.name);
+        if (parsed) tile.appendChild(makeStandardCardSprite(parsed.rank, parsed.suit, parsed.modifiers, parsed.seal));
+        const posEl = document.createElement('div');
+        posEl.className = 'modifier deckPos';
+        posEl.textContent = inHand ? pos + ' (hand)' : String(pos);
+        tile.appendChild(posEl);
+        const nameEl = document.createElement('div');
+        nameEl.className = 'standardCardName';
+        nameEl.textContent = card.name;
+        tile.appendChild(nameEl);
+        return tile;
+    }
+
+    // Mini chooser under a Standard Pack card: add it to the tracked deck from a chosen round.
+    function attachDeckAddChooser(container, cardName, anteNum) {
+        const ds = window.deckState;
+        if (!ds) return;
+        container.classList.add('clickable');
+        container.title = 'Click to add this card to your deck';
+        container.addEventListener('click', (e) => {
+            if (e.target.closest('.deckAddMenu')) return;
+            const existing = container.querySelector('.deckAddMenu');
+            if (existing) { existing.remove(); return; }
+            const menu = document.createElement('div');
+            menu.className = 'deckAddMenu';
+            const rounds = (ds.rounds[anteNum] || []).length || 3;
+            const opts = [];
+            for (let r = 2; r <= rounds; r++) opts.push({ label: 'From round ' + r, a: anteNum, r });
+            opts.push({ label: 'From ante ' + (anteNum + 1), a: anteNum + 1, r: 1 });
+            opts.forEach(o => {
+                const b = document.createElement('button');
+                b.className = 'smallButton';
+                b.textContent = o.label;
+                b.addEventListener('click', (ev) => { ev.stopPropagation(); ds.add(cardName, o.a, o.r); });
+                menu.appendChild(b);
+            });
+            container.appendChild(menu);
+        });
     }
 
     function makeVoucherTile(name) {
@@ -1037,8 +1164,10 @@ function searchAndHighlight() {
                     nameElement.classList.add('sixthName');
                     sixthContainer.appendChild(nameElement);
 
+                    // Sixth Sense fires at most once per round (first hand a lone 6), but the
+                    // RNG stream only advances on a trigger, so label by trigger, not round.
                     const roundElement = document.createElement('div');
-                    roundElement.textContent = 'Round ' + (idx + 1);
+                    roundElement.textContent = 'Trigger ' + (idx + 1);
                     if (idx % 3 === 0 && idx > 0) sixthContainer.classList.add('sixthSetStart');
                     roundElement.classList.add('modifier');
                     sixthContainer.appendChild(roundElement);
@@ -1151,6 +1280,121 @@ function searchAndHighlight() {
                 });
             }
 
+            // Deck & draw order, collapsed by default. Each round lists the full shuffled
+            // deck in draw order with the opening hand marked; clicking a card records it as
+            // destroyed during that round (gone from the next round on).
+            const ds = window.deckState;
+            const anteRounds = ds && ds.rounds[anteNum];
+            if (anteRounds && anteRounds.length > 0) {
+                const deckLabel = 'Deck & Draw Order (' + anteRounds[0].cards.length + ' cards, hand ' + anteRounds[0].hand + ')';
+                createCollapsible(queueContainer, title + ':deck', deckLabel, (body) => {
+                    body.className = 'deckPanel';
+
+                    // Controls: add a card, hand-size adjustment, extra rounds, clear.
+                    const controls = document.createElement('div');
+                    controls.className = 'deckControls';
+                    const mkSelect = (values, labelFn) => {
+                        const sel = document.createElement('select');
+                        values.forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = labelFn ? labelFn(v) : v; sel.appendChild(o); });
+                        return sel;
+                    };
+                    const enhSel = mkSelect(CARD_ENHANCEMENTS, v => v === '' ? 'No enhancement' : v);
+                    const rankSel = mkSelect(CARD_RANKS);
+                    const suitSel = mkSelect(CARD_SUITS);
+                    const fromOpts = [];
+                    anteRounds.forEach((_, i) => fromOpts.push({ v: anteNum + ':' + (i + 1), t: 'From round ' + (i + 1) }));
+                    fromOpts.push({ v: (anteNum + 1) + ':1', t: 'From ante ' + (anteNum + 1) });
+                    const fromSel = document.createElement('select');
+                    fromOpts.forEach(o => { const opt = document.createElement('option'); opt.value = o.v; opt.textContent = o.t; fromSel.appendChild(opt); });
+                    fromSel.value = anteNum + ':2';
+                    const addBtn = document.createElement('button');
+                    addBtn.className = 'smallButton';
+                    addBtn.textContent = 'Add card';
+                    addBtn.addEventListener('click', () => {
+                        const name = (enhSel.value ? enhSel.value + ' ' : '') + rankSel.value + ' of ' + suitSel.value;
+                        const [a, r] = fromSel.value.split(':').map(x => parseInt(x, 10));
+                        ds.add(name, a, r);
+                    });
+                    [enhSel, rankSel, suitSel, fromSel, addBtn].forEach(el => controls.appendChild(el));
+
+                    const handLabel = document.createElement('label');
+                    handLabel.textContent = 'Hand size adjust:';
+                    handLabel.title = 'Manual +/- for Jokers like Juggler, Stuntman, Turtle Bean';
+                    const handInput = document.createElement('input');
+                    handInput.type = 'number'; handInput.min = -7; handInput.max = 20; handInput.value = ds.handAdjust;
+                    handInput.className = 'deckHandInput';
+                    handInput.addEventListener('change', () => ds.setHandAdjust(handInput.value));
+                    handLabel.appendChild(handInput);
+                    controls.appendChild(handLabel);
+
+                    const moreBtn = document.createElement('button');
+                    moreBtn.className = 'smallButton';
+                    moreBtn.textContent = 'Reveal another round';
+                    moreBtn.title = 'For replaying this ante after Hieroglyph / Petroglyph';
+                    moreBtn.addEventListener('click', () => ds.moreRounds(anteNum));
+                    controls.appendChild(moreBtn);
+                    if ((ds.extra[anteNum] || 0) > 0) {
+                        const resetBtn = document.createElement('button');
+                        resetBtn.className = 'smallButton';
+                        resetBtn.textContent = 'Reset rounds';
+                        resetBtn.addEventListener('click', () => ds.resetRounds(anteNum));
+                        controls.appendChild(resetBtn);
+                    }
+                    if (ds.ops.length > 0) {
+                        const clearBtn = document.createElement('button');
+                        clearBtn.className = 'smallButton';
+                        clearBtn.textContent = 'Clear all deck changes';
+                        clearBtn.addEventListener('click', () => { if (confirm('Remove every recorded deck change for this seed?')) ds.clear(); });
+                        controls.appendChild(clearBtn);
+                    }
+                    body.appendChild(controls);
+
+                    const note = document.createElement('div');
+                    note.className = 'modifier deckNote';
+                    note.textContent = 'Rounds count blinds actually played: a skipped blind does not shuffle. Plays and discards never change the order; only adding or removing cards does. Click a card if it is destroyed during that round.';
+                    body.appendChild(note);
+
+                    // Changes that take effect in this ante, each with an undo.
+                    const anteOps = ds.ops.filter(op => op.ante === anteNum);
+                    if (anteOps.length > 0) {
+                        const opsList = document.createElement('div');
+                        opsList.className = 'deckOps';
+                        anteOps.forEach(op => {
+                            const row = document.createElement('div');
+                            row.textContent = (op.type === 'add' ? 'Added ' : 'Removed ') + op.name + ' from round ' + op.round + ' ';
+                            const undo = document.createElement('button');
+                            undo.className = 'smallButton';
+                            undo.textContent = 'Undo';
+                            undo.addEventListener('click', () => ds.undo(op.seq));
+                            row.appendChild(undo);
+                            opsList.appendChild(row);
+                        });
+                        body.appendChild(opsList);
+                    }
+
+                    anteRounds.forEach((rd, ri) => {
+                        const r = ri + 1;
+                        const roundLabel = 'Round ' + r + ' (' + rd.cards.length + ' cards, hand ' + rd.hand + ')';
+                        createCollapsible(body, title + ':deck:' + r, roundLabel, (rb) => {
+                            const scroll = document.createElement('div');
+                            scroll.className = 'scrollable no-select';
+                            // A card destroyed during round r is gone from the next round on.
+                            const nextA = r < anteRounds.length ? anteNum : anteNum + 1;
+                            const nextR = r < anteRounds.length ? r + 1 : 1;
+                            rd.cards.forEach((card, idx) => {
+                                const tile = makeDeckCardTile(card, idx + 1, idx < rd.hand);
+                                tile.classList.add('clickable');
+                                tile.title = 'Click if this card is destroyed or removed during round ' + r;
+                                tile.addEventListener('click', () => ds.remove(card.id, card.name, nextA, nextR));
+                                scroll.appendChild(tile);
+                            });
+                            rb.appendChild(scroll);
+                            attachDragScroll(scroll);
+                        }, null, true);
+                    });
+                }, 'generatorGroupTitle');
+            }
+
             // Shop queue, collapsed by default. Dividers mark each shop "frame" of
             // shopSlots cards, so you can read the queue visit by visit.
             const shopFrames = Math.ceil(queue.length / shopSlots);
@@ -1166,19 +1410,31 @@ function searchAndHighlight() {
                 attachDragScroll(scrollable);
             });
 
-            // Card generator rows (Judgement, Riff-Raff, Cartomancer, 8 Ball / Purple Seal, Emperor).
-            // Collapsed by default; tiles are only built the first time a row is expanded.
-            generators.forEach(({ label, cards }) => {
-                if (cards.length === 0) return;
-                createCollapsible(queueContainer, title + ':' + label, label + ' (' + cards.length + ')', (body) => {
-                    const generatorScrollable = document.createElement('div');
-                    generatorScrollable.className = 'scrollable no-select';
-                    cards.forEach((card, idx) => {
-                        generatorScrollable.appendChild(createQueueItem((idx + 1) + ') ' + card));
+            // Card generator rows, split into two collapsible groups: Joker Generation
+            // (Judgement, Riff-Raff, The Soul, Wraith, tags) and Consumable Generation
+            // (Cartomancer, 8 Ball / Purple Seal, Emperor, Vagabond, ...). Each source
+            // inside a group is its own collapsible; tiles are only built on first expand.
+            [
+                { group: 'joker', heading: 'Joker Generation' },
+                { group: 'consumable', heading: 'Consumable Generation' },
+            ].forEach(({ group, heading }) => {
+                const rows = generators.filter(g => g.group === group && g.cards.length > 0);
+                if (rows.length === 0) return;
+                createCollapsible(queueContainer, title + ':gen:' + group, heading + ' (' + rows.length + ')', (groupBody) => {
+                    groupBody.className = 'generatorGroup';
+                    rows.forEach(({ label, hint, cards }) => {
+                        const rowBody = createCollapsible(groupBody, title + ':' + label, label + ' (' + cards.length + ')', (body) => {
+                            const generatorScrollable = document.createElement('div');
+                            generatorScrollable.className = 'scrollable no-select';
+                            cards.forEach((card, idx) => {
+                                generatorScrollable.appendChild(createQueueItem((idx + 1) + ') ' + card));
+                            });
+                            body.appendChild(generatorScrollable);
+                            attachDragScroll(generatorScrollable);
+                        });
+                        if (hint) rowBody.previousSibling.title = hint;
                     });
-                    body.appendChild(generatorScrollable);
-                    attachDragScroll(generatorScrollable);
-                });
+                }, 'generatorGroupTitle');
             });
 
             if (packs.length > 0) {
@@ -1234,6 +1490,7 @@ function searchAndHighlight() {
                             const { rank, suit, modifiers, seal } = parseStandardCardName(cardName);
 
                             cardContainer.appendChild(makeStandardCardSprite(rank, suit, modifiers, seal));
+                            attachDeckAddChooser(cardContainer, cardName, anteNum);
 
                             const cardText = document.createElement('div');
                             cardText.textContent = getStandardCardName(cardName);

@@ -56,6 +56,15 @@ struct Instance {
         rng = LuaRandom(get_node(ID));
         return rng.random();
     }
+    // Forget a stream so its next pull starts from the seed again. Used to replay a
+    // run-wide stream (the 1.0.1+ Legendary pool, key "Joker4") from the top for each ante.
+    void resetNode(std::string ID) {
+        std::string resamplePrefix = ID + "_resample";
+        for (auto it = cache.nodes.begin(); it != cache.nodes.end();) {
+            if (it->first == ID || it->first.rfind(resamplePrefix, 0) == 0) it = cache.nodes.erase(it);
+            else ++it;
+        }
+    }
     int randint(std::string ID, int min, int max) {
         rng = LuaRandom(get_node(ID));
         return rng.randint(min, max);
@@ -112,4 +121,5 @@ struct Instance {
     void setStake(std::string stake);
     std::string nextTag(int ante);
     std::string nextBoss(int ante);
+    std::vector<int> nextShuffle(int ante, int size);
 };

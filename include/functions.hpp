@@ -207,6 +207,7 @@ JokerData Instance::nextJoker(std::string source, int ante, bool hasStickers) {
     else if (source == "rta") rarity = "3";
     else if (source == "uta") rarity = "2";
     else if (source == "rif") rarity = "1"; // Riff-Raff: create_card(..., _rarity=0, ..., 'rif') forces Common, no rarity poll
+    else if (source == "top") rarity = "1"; // Top-up Tag: create_card(..., _rarity=0, ..., 'top') forces Common, no rarity poll
     else {
         double rarityPoll = random("rarity"+anteStr+source);
         if (rarityPoll > 0.95) rarity = "3";
@@ -471,6 +472,29 @@ void Instance::setStake(std::string stake) {
 
 std::string Instance::nextTag(int ante) {
     return randchoice("Tag"+std::to_string(ante), TAGS);
+}
+
+// Deck shuffle. The game calls CardArea:shuffle('nr' .. ante) at run start and at
+// the start of every blind: the deck is sorted by creation order (sort_id), then
+// Fisher-Yates shuffled with math.random reseeded from the 'nr'+ante stream. The
+// draw order is therefore a fixed permutation of the deck at that moment, and what
+// you play or discard never changes what comes next. Returns, for a deck of `size`
+// cards in sort_id order, the index at each shuffled position (0 = first drawn).
+std::vector<int> Instance::nextShuffle(int ante, int size) {
+    std::vector<int> order(size);
+    for (int i = 0; i < size; i++) order[i] = i;
+    // pseudoshuffle: reseeds math.random with the stream value, then
+    //   for i = #list, 2, -1 do j = math.random(i); swap(list[i], list[j]) end
+    rng = LuaRandom(get_node("nr" + std::to_string(ante)));
+    for (int i = size; i >= 2; i--) {
+        int j = rng.randint(1, i);
+        std::swap(order[i-1], order[j-1]);
+    }
+    // Cards are drawn from the END of the shuffled card list (table.remove), so the
+    // last element after the shuffle is the first card into your hand.
+    std::vector<int> drawn(size);
+    for (int i = 0; i < size; i++) drawn[i] = order[size-1-i];
+    return drawn;
 }
 
 std::string Instance::nextBoss(int ante) {

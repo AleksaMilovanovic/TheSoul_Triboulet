@@ -11,6 +11,7 @@ EMSCRIPTEN_BINDINGS(Immolate) {
     register_vector<std::string>("VectorStr");
     register_vector<JokerData>("VectorJkr");
     register_vector<Card>("VectorCrd");
+    register_vector<int>("VectorInt");
     class_<InstParams>("InstParams")
         .constructor<>()
         .constructor<std::string, std::string, bool, long>()
@@ -25,6 +26,7 @@ EMSCRIPTEN_BINDINGS(Immolate) {
         .function("random", &Instance::random)
         .function("randint", &Instance::randint)
         .function("randchoice", &Instance::randchoice)
+        .function("resetNode", &Instance::resetNode)
         .property("params", &Instance::params)
         .property("seed", &Instance::seed)
 
@@ -53,7 +55,8 @@ EMSCRIPTEN_BINDINGS(Immolate) {
         .function("setDeck", &Instance::setDeck)
         .function("setStake", &Instance::setStake)
         .function("nextTag", &Instance::nextTag)
-        .function("nextBoss", &Instance::nextBoss);
+        .function("nextBoss", &Instance::nextBoss)
+        .function("nextShuffle", &Instance::nextShuffle);
     function("packInfo", &packInfo);
 
     //items.hpp
