@@ -232,6 +232,9 @@
         <label for="judgementCount">Judgement Jokers:</label>
         <input type="number" id="judgementCount" min="0" max="999" value="10" required>
         <br>
+        <label for="riffRaffCount">Riff-Raff Jokers:</label>
+        <input type="number" id="riffRaffCount" min="0" max="999" value="6" required>
+        <br>
         <label for="cartomancerCount">Cartomancer Tarots:</label>
         <input type="number" id="cartomancerCount" min="0" max="999" value="20" required>
         <br>
@@ -519,6 +522,7 @@
     const anteInput = document.getElementById('ante');
     const framesPerAnteInput = document.getElementById('framesPerAnte');
     const judgementInput = document.getElementById('judgementCount');
+    const riffRaffInput = document.getElementById('riffRaffCount');
     const cartomancerInput = document.getElementById('cartomancerCount');
     const eightBallInput = document.getElementById('eightBallCount');
     const emperorInput = document.getElementById('emperorCount');
@@ -563,6 +567,7 @@
       if (anteInput.value !== '38') params.append('ante', anteInput.value);
       if (framesPerAnteInput.value !== defaultFrames(38)) params.append('framesPerAnte', framesPerAnteInput.value);
       if (judgementInput.value !== '10') params.append('judgement', judgementInput.value);
+      if (riffRaffInput.value !== '6') params.append('riffRaff', riffRaffInput.value);
       if (cartomancerInput.value !== '20') params.append('cartomancer', cartomancerInput.value);
       if (eightBallInput.value !== '20') params.append('eightBall', eightBallInput.value);
       if (emperorInput.value !== '20') params.append('emperor', emperorInput.value);
@@ -616,6 +621,7 @@
       const framesPerAnte = framesPerAnteInput.value.split(',').map(Number);
       const clampCount = (v) => Math.max(0, Math.min(999, parseInt(v, 10) || 0));
       const judgementCount = clampCount(judgementInput.value);
+      const riffRaffCount = clampCount(riffRaffInput.value);
       const cartomancerCount = clampCount(cartomancerInput.value);
       const eightBallCount = clampCount(eightBallInput.value);
       const emperorCount = clampCount(emperorInput.value);
@@ -708,6 +714,20 @@
           jkr.delete();
         }
         output += "Judgement: " + judgement.join(", ") + "\n";
+
+        // Riff-Raff: creates 2 Common Jokers when a blind is selected (up to 6 per
+        // ante over 3 blinds) using the game's "rif" source key. Rarity is forced
+        // to Common, so only the "Joker1rif" pool and the edition stream are polled.
+        var riffRaff = [];
+        for (let i = 0; i < riffRaffCount; i++) {
+          var rjkr = inst.nextJoker("rif", a, false);
+          var rname = "";
+          if (rjkr.edition != "No Edition") rname += rjkr.edition + " ";
+          rname += rjkr.joker;
+          riffRaff.push(rname);
+          rjkr.delete();
+        }
+        output += "Riff-Raff: " + riffRaff.join(", ") + "\n";
 
         // Tarot generators. Each source key is its own RNG stream.
         // 8 Ball and Purple Seal share the "8ba" key in the game.
@@ -852,6 +872,7 @@
       const urlVersion = urlParams.get('version');
       const urlUnlocks = urlParams.get('unlocks');
       const urlJudgement = urlParams.get('judgement');
+      const urlRiffRaff = urlParams.get('riffRaff');
       const urlCartomancer = urlParams.get('cartomancer');
       const urlEightBall = urlParams.get('eightBall');
       const urlEmperor = urlParams.get('emperor');
@@ -894,6 +915,7 @@
         input.value = Math.max(0, Math.min(999, parseInt(value, 10) || 0));
       };
       if (urlJudgement !== null) clampCountField(document.getElementById('judgementCount'), urlJudgement);
+      if (urlRiffRaff !== null) clampCountField(document.getElementById('riffRaffCount'), urlRiffRaff);
       if (urlCartomancer !== null) clampCountField(document.getElementById('cartomancerCount'), urlCartomancer);
       if (urlEightBall !== null) clampCountField(document.getElementById('eightBallCount'), urlEightBall);
       if (urlEmperor !== null) clampCountField(document.getElementById('emperorCount'), urlEmperor);

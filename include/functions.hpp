@@ -206,6 +206,7 @@ JokerData Instance::nextJoker(std::string source, int ante, bool hasStickers) {
     else if (source == "wra") rarity = "3";
     else if (source == "rta") rarity = "3";
     else if (source == "uta") rarity = "2";
+    else if (source == "rif") rarity = "1"; // Riff-Raff: create_card(..., _rarity=0, ..., 'rif') forces Common, no rarity poll
     else {
         double rarityPoll = random("rarity"+anteStr+source);
         if (rarityPoll > 0.95) rarity = "3";

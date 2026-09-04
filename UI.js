@@ -721,6 +721,7 @@ function searchAndHighlight() {
                 const sixthMatch = match.match(/Sixth Sense: (.+)/);
                 const generatorDefs = [
                     { key: 'Judgement', label: 'Judgement' },
+                    { key: 'Riff-Raff', label: 'Riff-Raff' },
                     { key: 'Cartomancer', label: 'Cartomancer' },
                     { key: '8 Ball / Purple Seal', label: '8 Ball / Purple Seal' },
                     { key: 'Emperor', label: 'Emperor' },
@@ -1165,7 +1166,7 @@ function searchAndHighlight() {
                 attachDragScroll(scrollable);
             });
 
-            // Card generator rows (Judgement, Cartomancer, 8 Ball / Purple Seal, Emperor).
+            // Card generator rows (Judgement, Riff-Raff, Cartomancer, 8 Ball / Purple Seal, Emperor).
             // Collapsed by default; tiles are only built the first time a row is expanded.
             generators.forEach(({ label, cards }) => {
                 if (cards.length === 0) return;
