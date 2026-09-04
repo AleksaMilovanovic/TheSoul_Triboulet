@@ -388,6 +388,42 @@ function searchAndHighlight() {
         border-left: 1px solid #555555;
     }
 
+    /* Owned Cards panel and held-card outlines */
+    .ownedPanel {
+        margin-left: 16px;
+        padding-left: 10px;
+        border-left: 1px solid #555555;
+    }
+    .ownable.owned {
+        outline: 2px solid #96ed79;
+        outline-offset: -2px;
+        border-radius: 3px;
+    }
+    .ownedTile {
+        width: 90px;
+    }
+    .ownedActions {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        margin-top: 3px;
+    }
+    .ownedActions .smallButton {
+        font-size: 9px;
+        padding: 2px 5px;
+    }
+    .ownedNameInput {
+        font-size: 12px;
+        width: 180px;
+    }
+    .ownedNameInput.badName {
+        outline: 2px solid #ff8080;
+    }
+    .ownedShowman {
+        font-size: 12px;
+        cursor: pointer;
+    }
+
     /* Deck & Draw Order panel */
     .deckPanel {
         margin-left: 16px;
@@ -470,6 +506,54 @@ function searchAndHighlight() {
 
     .clickable {
         cursor: pointer;
+    }
+
+    /* Seen marks: a slight grey tint on cards you have already passed */
+    .seenable.seen {
+        filter: grayscale(0.7);
+        opacity: 0.5;
+    }
+    .seenable.seen:hover {
+        opacity: 0.75;
+    }
+    .queueItem {
+        position: relative;
+    }
+    .seenUpTo {
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        font-size: 11px;
+        line-height: 1;
+        padding: 2px 5px;
+        opacity: 0;
+        transition: opacity 0.1s;
+    }
+    .queueItem:hover .seenUpTo {
+        opacity: 1;
+    }
+    .seenStub {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 44px;
+        height: 95px;
+        margin-right: 10px;
+        border: 1px dashed #777777;
+        border-radius: 4px;
+        color: #aaaaaa;
+        font-size: 10px;
+        text-align: center;
+        white-space: normal;
+        flex-shrink: 0;
+    }
+    .seenStub:hover {
+        background-color: #3a3a3a;
+    }
+    .seenControls {
+        flex-wrap: wrap;
+        margin-bottom: 6px;
+        font-size: 11px;
     }
 
     .packControls {
@@ -865,6 +949,64 @@ function searchAndHighlight() {
         }
     }
 
+    // "Seen" marks: cards you have already passed in the game, greyed out on click. Kept
+    // per seed + deck in localStorage, never in the share link. Shop queues can also
+    // collapse their leading run of seen cards into a stub.
+    const seenState = { key: null, seen: new Set(), shopCollapsed: new Set() };
+    function seenStoreKey() {
+        const seed = (document.getElementById('seed').value || '').toUpperCase().replace(/0/g, 'O');
+        return 'theSoulSeen:' + seed + ':' + document.getElementById('deck').value;
+    }
+    function loadSeenState() {
+        const key = seenStoreKey();
+        if (key === seenState.key) return;
+        seenState.key = key; seenState.seen.clear(); seenState.shopCollapsed.clear();
+        try {
+            const st = JSON.parse(localStorage.getItem(key));
+            if (st) { (st.seen || []).forEach(k => seenState.seen.add(k)); (st.shopCollapsed || []).forEach(a => seenState.shopCollapsed.add(a)); }
+        } catch (e) { /* unavailable or corrupt: start clean */ }
+    }
+    function saveSeenState() {
+        try { localStorage.setItem(seenState.key, JSON.stringify({ seen: [...seenState.seen], shopCollapsed: [...seenState.shopCollapsed] })); } catch (e) { /* page-only state */ }
+    }
+    function setSeen(tile, key, on) { if (on) seenState.seen.add(key); else seenState.seen.delete(key); tile.classList.toggle('seen', on); }
+    // Right-click toggles the seen tint (left click keeps its existing meaning per tile).
+    // onContext(e) may return true to take the event over; afterToggle() runs after a
+    // toggle (the shop uses it to recompute its collapsed run).
+    function attachSeenToggle(tile, key, onContext, afterToggle) {
+        tile.classList.add('seenable');
+        tile.classList.toggle('seen', seenState.seen.has(key));
+        tile.addEventListener('contextmenu', (e) => {
+            if (e.target.closest('button, select, input, .deckAddMenu')) return;
+            e.preventDefault();
+            if (onContext && onContext(e)) return;
+            setSeen(tile, key, !seenState.seen.has(key));
+            saveSeenState();
+            if (afterToggle) afterToggle();
+        });
+    }
+
+    // Left-click on a Joker / consumable tile marks it as acquired in this ante; the queues
+    // then reroll around it from that ante on, as the game does. Already-held cards are
+    // outlined. Ownership is modelled per name, so any copy of a held card is outlined.
+    function attachOwnToggle(tile, cardName, anteNum) {
+        const os = window.ownedState;
+        if (!os || determineItemType(cardName) === 'unknown') return;
+        const held = os.items.find(o => o.name === cardName && os.heldAt(o, anteNum));
+        tile.classList.add('ownable');
+        if (held) {
+            tile.classList.add('owned');
+            tile.title = 'Held (since ante ' + held.from + '). Manage it in the Owned Cards panel.';
+        } else {
+            tile.classList.add('clickable');
+            tile.title = 'Click if you acquire this card in this ante';
+            tile.addEventListener('click', (e) => {
+                if (e.target.closest('button, select, input, .deckAddMenu')) return;
+                os.add(cardName, anteNum);
+            });
+        }
+    }
+
     // Remembers which collapsible panels are open so a re-analysis doesn't close them.
     const expandedPanels = new Set();
     // Panels that default to open remember an explicit collapse the same way.
@@ -1009,6 +1151,7 @@ function searchAndHighlight() {
         const shopQueues = extractShopQueues(text);
 
         scrollingContainer.innerHTML = ''; // Clear previous content
+        loadSeenState();
 
         shopQueues.forEach(({ title, queue, boss, voucher, tags, sixthSense, generators, packs, raw }) => {
             const anteNum = parseInt((title.match(/\d+/) || ['0'])[0], 10);
@@ -1096,9 +1239,10 @@ function searchAndHighlight() {
             const tagsContainer = document.createElement('div');
             tagsContainer.className = 'tagsContainer';
 
-            tags.forEach(tag => {
+            tags.forEach((tag, idx) => {
                 const tagContainer = document.createElement('div');
                 tagContainer.className = 'tagContainer';
+                attachSeenToggle(tagContainer, anteNum + ':tag:' + idx);
 
                 tagContainer.appendChild(makeTagSprite(tag));
 
@@ -1154,6 +1298,8 @@ function searchAndHighlight() {
                 sixthSense.forEach((cardName, idx) => {
                     const sixthContainer = document.createElement('div');
                     sixthContainer.className = 'sixthContainer';
+                    attachSeenToggle(sixthContainer, anteNum + ':sixth:' + idx);
+                    attachOwnToggle(sixthContainer, cardName, anteNum);
 
                     sixthContainer.appendChild(determineItemType(cardName) !== 'unknown'
                         ? makeCardSprite(cardName, 'tarot', [], [])
@@ -1280,6 +1426,114 @@ function searchAndHighlight() {
                 });
             }
 
+            // Owned Jokers / consumables, collapsed by default. Held cards are locked out of
+            // every queue from the ante you get them until the ante you let them go.
+            const os = window.ownedState;
+            if (os) {
+                const heldHere = os.items.filter(o => os.heldAt(o, anteNum));
+                createCollapsible(queueContainer, title + ':owned', 'Owned Cards (' + heldHere.length + (os.showman ? ', Showman' : '') + ')', (body) => {
+                    body.className = 'ownedPanel';
+
+                    const controls = document.createElement('div');
+                    controls.className = 'deckControls';
+                    const nameInput = document.createElement('input');
+                    nameInput.type = 'text';
+                    nameInput.placeholder = 'Joker / consumable name';
+                    nameInput.setAttribute('list', 'ownedNames');
+                    nameInput.className = 'ownedNameInput';
+                    if (!document.getElementById('ownedNames')) {
+                        const dl = document.createElement('datalist');
+                        dl.id = 'ownedNames';
+                        jokers.concat(tarotsAndPlanets).forEach(c => { const o = document.createElement('option'); o.value = c.name; dl.appendChild(o); });
+                        document.body.appendChild(dl);
+                    }
+                    const addBtn = document.createElement('button');
+                    addBtn.className = 'smallButton';
+                    addBtn.textContent = 'Add (this ante)';
+                    addBtn.addEventListener('click', () => {
+                        const name = nameInput.value.trim();
+                        if (determineItemType(name) === 'unknown') { nameInput.classList.add('badName'); return; }
+                        nameInput.classList.remove('badName');
+                        os.add(name, anteNum);
+                    });
+                    nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') addBtn.click(); });
+                    controls.appendChild(nameInput);
+                    controls.appendChild(addBtn);
+
+                    const showmanLabel = document.createElement('label');
+                    showmanLabel.className = 'ownedShowman';
+                    const showmanBox = document.createElement('input');
+                    showmanBox.type = 'checkbox';
+                    showmanBox.checked = os.showman;
+                    showmanBox.title = 'Showman: held cards can appear again, so nothing rerolls';
+                    showmanBox.addEventListener('change', () => os.setShowman(showmanBox.checked));
+                    showmanLabel.appendChild(showmanBox);
+                    showmanLabel.appendChild(document.createTextNode(' Showman'));
+                    controls.appendChild(showmanLabel);
+
+                    if (os.items.length > 0) {
+                        const clearBtn = document.createElement('button');
+                        clearBtn.className = 'smallButton';
+                        clearBtn.textContent = 'Clear all owned';
+                        clearBtn.addEventListener('click', () => { if (confirm('Forget every owned card for this seed?')) os.clear(); });
+                        controls.appendChild(clearBtn);
+                    }
+                    body.appendChild(controls);
+
+                    const note = document.createElement('div');
+                    note.className = 'modifier deckNote';
+                    note.textContent = 'Click a Joker or consumable in any queue to mark it acquired this ante. Held cards leave every pool, and any draw that would have produced one rerolls (the game\'s _resample keys), so later queue entries can shift.';
+                    body.appendChild(note);
+
+                    const grid = document.createElement('div');
+                    grid.className = 'voucherGrid';
+                    if (heldHere.length === 0) {
+                        const none = document.createElement('div');
+                        none.className = 'modifier';
+                        none.textContent = 'Nothing held this ante';
+                        grid.appendChild(none);
+                    }
+                    heldHere.forEach(o => {
+                        const tile = document.createElement('div');
+                        tile.className = 'voucherTile owned ownedTile';
+                        tile.appendChild(makeCardSprite(o.name, determineItemType(o.name), [], []));
+                        const nm = document.createElement('div');
+                        nm.className = 'voucherName';
+                        nm.textContent = o.name;
+                        tile.appendChild(nm);
+                        const since = document.createElement('div');
+                        since.className = 'modifier';
+                        since.textContent = (o.from === anteNum ? 'Got this ante' : 'Since ante ' + o.from) + (o.to !== null && o.to !== undefined ? ', gone after ante ' + o.to : '');
+                        tile.appendChild(since);
+                        const row = document.createElement('div');
+                        row.className = 'ownedActions';
+                        if (o.to === null || o.to === undefined) {
+                            const rel = document.createElement('button');
+                            rel.className = 'smallButton';
+                            rel.textContent = 'Lose this ante';
+                            rel.title = 'Sold, used, or destroyed during this ante: back in the pools from the next ante';
+                            rel.addEventListener('click', () => os.release(o.id, anteNum));
+                            row.appendChild(rel);
+                        } else {
+                            const keep = document.createElement('button');
+                            keep.className = 'smallButton';
+                            keep.textContent = 'Still held';
+                            keep.addEventListener('click', () => os.unrelease(o.id));
+                            row.appendChild(keep);
+                        }
+                        const del = document.createElement('button');
+                        del.className = 'smallButton';
+                        del.textContent = 'Undo';
+                        del.title = 'Never had it: remove the record entirely';
+                        del.addEventListener('click', () => os.remove(o.id));
+                        row.appendChild(del);
+                        tile.appendChild(row);
+                        grid.appendChild(tile);
+                    });
+                    body.appendChild(grid);
+                }, 'generatorGroupTitle');
+            }
+
             // Deck & draw order, collapsed by default. Each round lists the full shuffled
             // deck in draw order with the opening hand marked; clicking a card records it as
             // destroyed during that round (gone from the next round on).
@@ -1398,16 +1652,77 @@ function searchAndHighlight() {
             // Shop queue, collapsed by default. Dividers mark each shop "frame" of
             // shopSlots cards, so you can read the queue visit by visit.
             const shopFrames = Math.ceil(queue.length / shopSlots);
+            // Right-click a card to grey it out as seen. Shift+right-click (or the corner
+            // button) marks it and everything to its left as seen and collapses that run.
             createCollapsible(queueContainer, title + ':shop', 'Shop Queue (' + shopFrames + ' frames, ' + shopSlots + ' cards per frame)', (body) => {
+                const controls = document.createElement('div');
+                controls.className = 'packControls seenControls';
+                const collapseBtn = document.createElement('button');
+                collapseBtn.className = 'smallButton';
+                const clearBtn = document.createElement('button');
+                clearBtn.className = 'smallButton';
+                clearBtn.textContent = 'Clear seen (this ante)';
+                const hint = document.createElement('span');
+                hint.className = 'modifier';
+                hint.textContent = 'Right-click a card to mark it seen. Shift+right-click marks it and everything left of it as seen and collapses them.';
+                controls.appendChild(collapseBtn);
+                controls.appendChild(clearBtn);
+                controls.appendChild(hint);
+                body.appendChild(controls);
+
                 const scrollable = document.createElement('div');
                 scrollable.className = 'scrollable no-select';
+                const stub = document.createElement('div');
+                stub.className = 'seenStub clickable';
+                stub.title = 'Show the seen cards';
+                scrollable.appendChild(stub);
+
+                const tiles = [];
+                const shopKey = (i) => anteNum + ':shop:' + i;
+                const refresh = () => {
+                    let n = 0;
+                    while (n < tiles.length && seenState.seen.has(shopKey(n))) n++;
+                    const collapsed = n > 0 && seenState.shopCollapsed.has(anteNum);
+                    tiles.forEach((t, i) => { t.hidden = collapsed && i < n; });
+                    stub.hidden = !collapsed;
+                    stub.textContent = n + ' seen \u25B8';
+                    collapseBtn.textContent = (collapsed ? 'Show seen' : 'Collapse seen') + ' (' + n + ')';
+                    collapseBtn.disabled = n === 0;
+                };
+                const markUpTo = (idx) => {
+                    for (let i = 0; i <= idx; i++) setSeen(tiles[i], shopKey(i), true);
+                    seenState.shopCollapsed.add(anteNum);
+                    saveSeenState();
+                    refresh();
+                };
                 queue.forEach((item, idx) => {
                     const tile = createQueueItem(item);
                     if (idx > 0 && idx % shopSlots === 0) tile.classList.add('frameStart');
+                    attachSeenToggle(tile, shopKey(idx), (e) => { if (e.shiftKey) { markUpTo(idx); return true; } return false; }, refresh);
+                    attachOwnToggle(tile, parseCardItem(item).cardName, anteNum);
+                    const upTo = document.createElement('button');
+                    upTo.className = 'seenUpTo';
+                    upTo.textContent = '\u21E4';
+                    upTo.title = 'Mark this card and everything left of it as seen and collapse them';
+                    upTo.addEventListener('click', (e) => { e.stopPropagation(); markUpTo(idx); });
+                    tile.appendChild(upTo);
+                    tiles.push(tile);
                     scrollable.appendChild(tile);
+                });
+                stub.addEventListener('click', () => { seenState.shopCollapsed.delete(anteNum); saveSeenState(); refresh(); });
+                collapseBtn.addEventListener('click', () => {
+                    if (seenState.shopCollapsed.has(anteNum)) seenState.shopCollapsed.delete(anteNum); else seenState.shopCollapsed.add(anteNum);
+                    saveSeenState(); refresh();
+                });
+                clearBtn.addEventListener('click', () => {
+                    [...seenState.seen].filter(k => k.startsWith(anteNum + ':')).forEach(k => seenState.seen.delete(k));
+                    seenState.shopCollapsed.delete(anteNum);
+                    queueContainer.querySelectorAll('.seenable.seen').forEach(t => t.classList.remove('seen'));
+                    saveSeenState(); refresh();
                 });
                 body.appendChild(scrollable);
                 attachDragScroll(scrollable);
+                refresh();
             });
 
             // Card generator rows, split into two collapsible groups: Joker Generation
@@ -1427,7 +1742,10 @@ function searchAndHighlight() {
                             const generatorScrollable = document.createElement('div');
                             generatorScrollable.className = 'scrollable no-select';
                             cards.forEach((card, idx) => {
-                                generatorScrollable.appendChild(createQueueItem((idx + 1) + ') ' + card));
+                                const genTile = createQueueItem((idx + 1) + ') ' + card);
+                                attachSeenToggle(genTile, anteNum + ':gen:' + label + ':' + idx);
+                                attachOwnToggle(genTile, parseCardItem(card).cardName, anteNum);
+                                generatorScrollable.appendChild(genTile);
                             });
                             body.appendChild(generatorScrollable);
                             attachDragScroll(generatorScrollable);
@@ -1446,7 +1764,7 @@ function searchAndHighlight() {
                 const packsContainer = document.createElement('div');
                 queueContainer.appendChild(packsContainer);
 
-                packs.forEach(pack => {
+                packs.forEach((pack, pi) => {
                     const packItems = pack.split(' - ');
                     const packName = packItems[0];
                     const packCards = packItems[1] ? packItems[1].split(', ') : [];
@@ -1459,14 +1777,16 @@ function searchAndHighlight() {
                     packNameElement.classList.add('packName');
                     packItem.appendChild(packNameElement);
 
-                    packCards.forEach(cardName => {
+                    packCards.forEach((cardName, ci) => {
                         const { cardName: parsedCardName, itemModifiers, itemStickers } = parseCardItem(cardName);
                         const itemType = determineItemType(parsedCardName);
 
                         const cardContainer = document.createElement('div');
+                        attachSeenToggle(cardContainer, anteNum + ':pack:' + pi + ':' + ci);
 
                         if (itemType !== 'unknown') {
                             cardContainer.appendChild(makeCardSprite(parsedCardName, itemType, itemModifiers, itemStickers));
+                            attachOwnToggle(cardContainer, parsedCardName, anteNum);
 
                             const itemText = document.createElement('div');
                             itemText.textContent = parsedCardName;

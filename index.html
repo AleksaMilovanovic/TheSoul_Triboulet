@@ -577,9 +577,11 @@
     // next; only adding or removing cards does. Deck changes are recorded as ops that take
     // effect from a given (ante, round) and are kept in localStorage per seed + deck. They
     // are deliberately not part of the share link.
-    // Two calibration switches, to lock against a real run on a known seed:
-    const DRAW_RUN_START_SHUFFLE = true; // start_run shuffles once ('nr1') before the first blind shuffles again
-    const DRAW_FROM_END = true;          // cards are dealt from the end of the shuffled list
+    // Calibrated against seed 11111111, Red Deck, 1.0.1n: the first pull of 'nr1' is the
+    // round 1 draw order and the second pull is round 2, dealt from the end of the list.
+    // The run-start shuffle therefore does not consume a pull from this stream.
+    const DRAW_RUN_START_SHUFFLE = false;
+    const DRAW_FROM_END = true;
     var deckOps = [];        // { type:'add', id, name, ante, round, seq } | { type:'remove', target, ante, round, seq }
     var deckRounds = {};     // ante -> [{ hand, cards: [{ id, name }] }], rebuilt by performAnalysis
     var extraRounds = {};    // ante -> extra rounds revealed (replaying an ante after Hieroglyph/Petroglyph)
@@ -678,6 +680,64 @@
       clear: function() { deckOps.length = 0; deckHandAdjust = 0; Object.keys(extraRounds).forEach(k => delete extraRounds[k]); deckChanged(); },
       moreRounds: function(ante) { extraRounds[ante] = (extraRounds[ante] || 0) + 1; deckChanged(); },
       resetRounds: function(ante) { delete extraRounds[ante]; deckChanged(); }
+    };
+
+    // ---- Owned Jokers / consumables ----
+    // Balatro locks a Joker or consumable you hold out of every pool (G.GAME.used_jokers):
+    // if a stream would produce it, the game retries that one draw on <key>_resample2,
+    // _resample3, ... until it finds something you don't hold. randchoice() in the engine
+    // already does exactly this for anything lock()ed, so ownership is modelled by locking
+    // each owned card at the ante you get it and unlocking it at the ante you lose it.
+    // Showman (params.showman) turns the whole check off, as in the game.
+    // Kept in localStorage per seed + deck, never in the share link.
+    var ownedItems = [];     // { id, name, from, to } : held from ante `from` up to and including ante `to` (null = still held)
+    var ownedShowman = false;
+    var ownedSeq = 0;
+    var ownedStoreKey = null;
+
+    function saveOwnedState() {
+      try { localStorage.setItem(ownedStoreKey, JSON.stringify({ items: ownedItems, showman: ownedShowman, seq: ownedSeq })); } catch (e) { /* page-only */ }
+    }
+    function loadOwnedState(seed, deck) {
+      var key = 'theSoulOwned:' + seed + ':' + deck;
+      if (key == ownedStoreKey) return;
+      ownedStoreKey = key;
+      ownedItems.length = 0; ownedShowman = false; ownedSeq = 0;
+      try {
+        var st = JSON.parse(localStorage.getItem(key));
+        if (st) { (st.items || []).forEach(o => ownedItems.push(o)); ownedShowman = !!st.showman; ownedSeq = st.seq || 0; }
+      } catch (e) { /* start clean */ }
+    }
+    function ownedChanged() { saveOwnedState(); performAnalysis(); }
+    function heldAt(item, a) { return item.from <= a && (item.to === null || item.to === undefined || a <= item.to); }
+
+    window.ownedState = {
+      items: ownedItems,
+      get showman() { return ownedShowman; },
+      setShowman: function(on) { ownedShowman = !!on; ownedChanged(); },
+      heldAt: heldAt,
+      // Card acquired in ante `ante` (in the game it leaves the pools the moment you hold it,
+      // so every queue from that ante on rerolls around it).
+      add: function(name, ante) {
+        ownedSeq++;
+        ownedItems.push({ id: 'o' + ownedSeq, name: name, from: ante, to: null });
+        ownedChanged();
+      },
+      // Card sold / used / destroyed during ante `ante`: still held for that ante, back in
+      // the pools from the next ante on.
+      release: function(id, ante) {
+        var it = ownedItems.find(o => o.id == id);
+        if (it) { it.to = ante; ownedChanged(); }
+      },
+      unrelease: function(id) {
+        var it = ownedItems.find(o => o.id == id);
+        if (it) { it.to = null; ownedChanged(); }
+      },
+      remove: function(id) {
+        var idx = ownedItems.findIndex(o => o.id == id);
+        if (idx >= 0) { ownedItems.splice(idx, 1); ownedChanged(); }
+      },
+      clear: function() { ownedItems.length = 0; ownedShowman = false; ownedChanged(); }
     };
 
     instantAnalysis = false;
@@ -815,6 +875,8 @@
       inst.setDeck(deck);
       var ghostDeck = (deck == "Ghost Deck");
       loadDeckState(seed, deck);
+      loadOwnedState(seed, deck);
+      if (ownedShowman) { var sp = inst.params; sp.showman = true; inst.params = sp; sp.delete(); }
       var startCards = startingDeck(inst, deck);
       Object.keys(deckRounds).forEach(k => delete deckRounds[k]);
       var pairs = voucherPairs();
@@ -842,6 +904,13 @@
         output += "Voucher: " + inst.nextVoucher(a) + "\n";
         var ownedNow = Object.keys(voucherPurchases).filter(n => voucherPurchases[n] <= a);
         if (ownedNow.length > 0) output += "Owned Vouchers: " + ownedNow.join(", ") + "\n";
+
+        // Owned Jokers / consumables: lock what you hold this ante, release what you let go
+        // of last ante. Ordered so a card released and re-acquired in the same ante stays locked.
+        ownedItems.forEach(o => { if (o.to !== null && o.to !== undefined && o.to == a - 1) inst.unlock(o.name); });
+        ownedItems.forEach(o => { if (o.from == a) inst.lock(o.name); });
+        var heldNow = ownedItems.filter(o => heldAt(o, a)).map(o => o.name);
+        if (heldNow.length > 0) output += "Owned Cards: " + heldNow.join(", ") + "\n";
         var tagList = [];
         var numTags = 2 + (extraTags[a] || 0);
         for (let t = 0; t < numTags; t++) tagList.push(inst.nextTag(a));
