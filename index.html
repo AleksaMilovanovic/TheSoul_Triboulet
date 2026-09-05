@@ -210,16 +210,48 @@
       width: 75%;
     }
 
-    .checkbox-column {
-      float: left;
-      width: 16.66%;
-      box-sizing: border-box;
-      padding: 0 10px;
+    .unlockSection {
+      text-align: left;
+      margin-bottom: 14px;
+      padding: 8px 10px;
+      border: 1px solid #cccccc;
+      border-radius: 4px;
     }
 
-    .checkbox-column label {
+    .unlockSectionHeader {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+      font-size: 1.05em;
+      font-weight: bold;
+    }
+
+    .unlockSectionHeader .unlockCount {
+      font-weight: normal;
+      font-size: 0.85em;
+      color: #555555;
+    }
+
+    .unlockSectionHeader button {
+      font-size: 0.8em;
+      padding: 2px 8px;
+    }
+
+    .unlockGrid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+      gap: 2px 12px;
+    }
+
+    .unlockGrid label {
       display: block;
-      margin-bottom: 5px;
+      font-size: 0.95em;
+      white-space: nowrap;
+    }
+
+    .unlockFooter {
+      margin-top: 6px;
     }
 
     .clearfix::after {
@@ -300,10 +332,12 @@
         <div id="checkboxesOverlay">
           <div id="checkboxesPopup">
             <h2>Unlocked Items</h2>
-            <div id="checkboxesContainer" class="clearfix"></div>
-            <button id="submitBtn">Submit</button>
-            <button id="unlockBtn">Unlock All</button>
-            <button id="lockBtn">Lock All</button>
+            <div id="checkboxesContainer"></div>
+            <div class="unlockFooter">
+              <button id="submitBtn">Submit</button>
+              <button id="unlockBtn">Unlock All</button>
+              <button id="lockBtn">Lock All</button>
+            </div>
           </div>
         </div>
         <br>
@@ -403,7 +437,7 @@
                     "Brainstorm",
                     "Satellite",
                     "Shoot the Moon",
-                    "Driver's License",
+                    "Drivers License",
                     "Cartomancer",
                     "Astronomer",
                     "Burnt Joker",
@@ -435,56 +469,107 @@
     const lockBtn = document.getElementById('lockBtn');
     const unlockBtn = document.getElementById('unlockBtn');
 
-    // Function to create checkboxes
+    // Unlock sections. The order of `options` is fixed because the share link encodes
+    // unlocks as a bit string by index, so grouping is display-only: each checkbox carries
+    // its original index and results are read back by that index.
+    const UNLOCK_SECTIONS = [
+      { key: 'tags',     title: 'Tags' },
+      { key: 'vouchers', title: 'Vouchers' },
+      { key: 'common',   title: 'Common Jokers' },
+      { key: 'uncommon', title: 'Uncommon Jokers' },
+      { key: 'rare',     title: 'Rare Jokers' },
+    ];
+    var unlockSectionOf = null;
+    function classifyUnlocks() {
+      if (unlockSectionOf) return unlockSectionOf;
+      const has = (vec, name) => { for (let i = 0; i < vec.size(); i++) if (vec.get(i) === name) return true; return false; };
+      unlockSectionOf = options.map(name => {
+        if (has(Immolate.TAGS, name)) return 'tags';
+        if (has(Immolate.VOUCHERS, name)) return 'vouchers';
+        if (has(Immolate.RARE_JOKERS, name)) return 'rare';
+        if (has(Immolate.UNCOMMON_JOKERS, name)) return 'uncommon';
+        if (has(Immolate.COMMON_JOKERS, name)) return 'common';
+        console.warn('Unlock option not found in any engine list:', name);
+        return 'common';
+      });
+      return unlockSectionOf;
+    }
+
     function createCheckboxes() {
       checkboxesContainer.innerHTML = '';
-      const numColumns = 6;
-      const optionsPerColumn = Math.ceil(options.length / numColumns);
+      const sectionOf = classifyUnlocks();
 
-      for (let i = 0; i < numColumns; i++) {
-        const columnDiv = document.createElement('div');
-        columnDiv.classList.add('checkbox-column');
+      UNLOCK_SECTIONS.forEach(sec => {
+        const indices = options.map((_, i) => i).filter(i => sectionOf[i] === sec.key);
+        if (indices.length === 0) return;
 
-        for (let j = i * optionsPerColumn; j < (i + 1) * optionsPerColumn && j < options.length; j++) {
+        const section = document.createElement('div');
+        section.className = 'unlockSection';
+
+        const header = document.createElement('div');
+        header.className = 'unlockSectionHeader';
+        const titleEl = document.createElement('span');
+        titleEl.textContent = sec.title;
+        const countEl = document.createElement('span');
+        countEl.className = 'unlockCount';
+        const allBtn = document.createElement('button');
+        allBtn.type = 'button';
+        allBtn.textContent = 'Unlock all';
+        const noneBtn = document.createElement('button');
+        noneBtn.type = 'button';
+        noneBtn.textContent = 'Lock all';
+        header.appendChild(titleEl);
+        header.appendChild(countEl);
+        header.appendChild(allBtn);
+        header.appendChild(noneBtn);
+        section.appendChild(header);
+
+        const grid = document.createElement('div');
+        grid.className = 'unlockGrid';
+        const boxes = [];
+        indices.forEach(i => {
           const checkbox = document.createElement('input');
           checkbox.type = 'checkbox';
-          checkbox.value = options[j];
-          checkbox.checked = selectedOptions[j]; // Set checkboxes as selected by default
+          checkbox.value = options[i];
+          checkbox.dataset.index = i;
+          checkbox.checked = selectedOptions[i];
           const label = document.createElement('label');
-          label.textContent = options[j];
+          label.textContent = options[i];
           label.prepend(checkbox);
-          columnDiv.appendChild(label);
-        }
+          grid.appendChild(label);
+          boxes.push(checkbox);
+        });
+        section.appendChild(grid);
 
-        checkboxesContainer.appendChild(columnDiv);
-      }
+        const refreshCount = () => { countEl.textContent = boxes.filter(b => b.checked).length + ' / ' + boxes.length + ' unlocked'; };
+        boxes.forEach(b => b.addEventListener('change', refreshCount));
+        allBtn.addEventListener('click', () => { boxes.forEach(b => b.checked = true); refreshCount(); });
+        noneBtn.addEventListener('click', () => { boxes.forEach(b => b.checked = false); refreshCount(); });
+        section.refreshCount = refreshCount;
+        refreshCount();
+
+        checkboxesContainer.appendChild(section);
+      });
     }
 
-    // Function to handle checkbox selections
-    function handleSubmit() {
-      const checkboxes = checkboxesContainer.querySelectorAll('input[type="checkbox"]');
-      selectedOptions = [];
-      checkboxes.forEach(checkbox => {
-        selectedOptions.push(checkbox.checked);
+    function readCheckboxes() {
+      const result = selectedOptions.slice();
+      checkboxesContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        result[parseInt(cb.dataset.index, 10)] = cb.checked;
       });
-      console.log('Selected Options:', selectedOptions);
-      // Do something with the selected options
+      return result;
+    }
+    function setAllCheckboxes(on) {
+      checkboxesContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = on; });
+      checkboxesContainer.querySelectorAll('.unlockSection').forEach(sec => sec.refreshCount && sec.refreshCount());
+    }
+
+    function handleSubmit() {
+      selectedOptions = readCheckboxes();
       closeOverlay();
     }
-    function handleLock() {
-      const checkboxes = checkboxesContainer.querySelectorAll('input[type="checkbox"]');
-      selectedOptions = [];
-      checkboxes.forEach(checkbox => {
-        checkbox.checked = false
-      });
-    }
-    function handleUnlock() {
-      const checkboxes = checkboxesContainer.querySelectorAll('input[type="checkbox"]');
-      selectedOptions = [];
-      checkboxes.forEach(checkbox => {
-        checkbox.checked = true
-      });
-    }
+    function handleLock() { setAllCheckboxes(false); }
+    function handleUnlock() { setAllCheckboxes(true); }
 
     // Function to open the checkbox overlay
     function openOverlay() {
@@ -582,6 +667,10 @@
     // The run-start shuffle therefore does not consume a pull from this stream.
     const DRAW_RUN_START_SHUFFLE = false;
     const DRAW_FROM_END = true;
+    // Perkeo firing more than once in one shop (Blueprint / Brainstorm): observed in-game to
+    // reuse the shop's single 'perkeo' roll, so the extra copies re-index that same value
+    // against the pool grown by the earlier copies. Set true to give each trigger its own pull.
+    const PERKEO_PULL_PER_TRIGGER = false;
     var deckOps = [];        // { type:'add', id, name, ante, round, seq } | { type:'remove', target, ante, round, seq }
     var deckRounds = {};     // ante -> [{ hand, cards: [{ id, name }] }], rebuilt by performAnalysis
     var extraRounds = {};    // ante -> extra rounds revealed (replaying an ante after Hieroglyph/Petroglyph)
@@ -686,11 +775,15 @@
     // Balatro locks a Joker or consumable you hold out of every pool (G.GAME.used_jokers):
     // if a stream would produce it, the game retries that one draw on <key>_resample2,
     // _resample3, ... until it finds something you don't hold. randchoice() in the engine
-    // already does exactly this for anything lock()ed, so ownership is modelled by locking
-    // each owned card at the ante you get it and unlocking it at the ante you lose it.
-    // Showman (params.showman) turns the whole check off, as in the game.
+    // does exactly this for anything hold()en, so ownership is modelled by holding each
+    // owned card at the ante you get it and releasing it at the ante you lose it. Showman
+    // (params.showman) waives only these "held" exclusions; permanent locks (profile
+    // unlocks, ante gating, bought vouchers) still apply with Showman, as in the game.
     // Kept in localStorage per seed + deck, never in the share link.
     var ownedItems = [];     // { id, name, from, to } : held from ante `from` up to and including ante `to` (null = still held)
+    // Owned entries may carry `shop` (1-based, the shop of `from` they arrived in) and
+    // `perkeo: true` for Negative copies Perkeo made. Slot order is acquisition order, and
+    // an entry with a shop sorts after everything acquired earlier in that ante.
     var ownedShowman = false;
     var ownedSeq = 0;
     var ownedStoreKey = null;
@@ -710,6 +803,22 @@
     }
     function ownedChanged() { saveOwnedState(); performAnalysis(); }
     function heldAt(item, a) { return item.from <= a && (item.to === null || item.to === undefined || a <= item.to); }
+    // Shops in an ante: ante 1 has two (after the Small and Big Blinds); from ante 2 on the
+    // shop after the previous Boss counts as shop 1, so there are three.
+    function shopsInAnte(a) { return a == 1 ? 2 : 3; }
+    // A card gained during round r is in hand for the next shop: shop r in ante 1, shop r+1
+    // from ante 2 on. Beyond the ante's last shop it only counts from the next ante.
+    function posForRound(a, r) { return a == 1 ? r : r + 1; }
+    var consumableNameSet = null;
+    function isConsumableName(name) {
+      if (!consumableNameSet) {
+        consumableNameSet = new Set();
+        [Immolate.TAROTS, Immolate.PLANETS, Immolate.SPECTRALS].forEach(v => { for (let i = 0; i < v.size(); i++) consumableNameSet.add(v.get(i)); });
+        consumableNameSet.add("The Soul"); consumableNameSet.add("Black Hole");
+        consumableNameSet.delete("RETRY");
+      }
+      return consumableNameSet.has(name);
+    }
 
     window.ownedState = {
       items: ownedItems,
@@ -718,11 +827,20 @@
       heldAt: heldAt,
       // Card acquired in ante `ante` (in the game it leaves the pools the moment you hold it,
       // so every queue from that ante on rerolls around it).
-      add: function(name, ante) {
+      // `pos` is where in the ante the card arrived, as the first shop of that ante whose
+      // Perkeo pool includes it (1 = in hand by shop 1, ..., 4 = only from the next ante).
+      // Rounds map to positions with posForRound(); shop purchases are their shop number.
+      add: function(name, ante, pos) {
         ownedSeq++;
-        ownedItems.push({ id: 'o' + ownedSeq, name: name, from: ante, to: null });
+        ownedItems.push({ id: 'o' + ownedSeq, name: name, from: ante, to: null, pos: pos || 1 });
         ownedChanged();
       },
+      setPos: function(id, pos) {
+        var it = ownedItems.find(o => o.id == id);
+        if (it) { it.pos = pos; ownedChanged(); }
+      },
+      shopsInAnte: shopsInAnte,
+      posForRound: posForRound,
       // Card sold / used / destroyed during ante `ante`: still held for that ante, back in
       // the pools from the next ante on.
       release: function(id, ante) {
@@ -737,7 +855,38 @@
         var idx = ownedItems.findIndex(o => o.id == id);
         if (idx >= 0) { ownedItems.splice(idx, 1); ownedChanged(); }
       },
-      clear: function() { ownedItems.length = 0; ownedShowman = false; ownedChanged(); }
+      clear: function() { ownedItems.length = 0; ownedShowman = false; ownedChanged(); },
+      // Perkeo fired again in shop `shop` (1-based) of ante `ante` (Blueprint / Brainstorm).
+      // The copy it made is added to your owned cards as a Negative held from that shop on,
+      // so it is in the pool for the next pick and rerolls the queues like any held card.
+      // The card itself is whatever the analysis says the next pick is, so callers pass it.
+      // A copy flagged kept:true is the shop's final copy, held without another trigger.
+      perkeoAgain: function(name, ante, shop) {
+        var kept = ownedItems.find(o => o.perkeo && o.kept && o.from == ante && o.shop == shop);
+        if (kept) { kept.kept = false; }   // the kept final copy is now followed by another trigger
+        else {
+          ownedSeq++;
+          ownedItems.push({ id: 'o' + ownedSeq, name: name, from: ante, to: null, shop: shop, perkeo: true, negative: true, kept: false });
+        }
+        ownedChanged();
+      },
+      // Undo the latest extra trigger in that shop (a kept final copy stays kept).
+      perkeoFewer: function(ante, shop) {
+        for (let i = ownedItems.length - 1; i >= 0; i--) {
+          if (ownedItems[i].perkeo && !ownedItems[i].kept && ownedItems[i].from == ante && ownedItems[i].shop == shop) { ownedItems.splice(i, 1); break; }
+        }
+        ownedChanged();
+      },
+      // Hold the shop's final copy without Perkeo firing again.
+      perkeoKeep: function(name, ante, shop) {
+        ownedSeq++;
+        ownedItems.push({ id: 'o' + ownedSeq, name: name, from: ante, to: null, shop: shop, perkeo: true, negative: true, kept: true });
+        ownedChanged();
+      },
+      perkeoUnkeep: function(ante, shop) {
+        var i = ownedItems.findIndex(o => o.perkeo && o.kept && o.from == ante && o.shop == shop);
+        if (i >= 0) { ownedItems.splice(i, 1); ownedChanged(); }
+      }
     };
 
     instantAnalysis = false;
@@ -907,8 +1056,8 @@
 
         // Owned Jokers / consumables: lock what you hold this ante, release what you let go
         // of last ante. Ordered so a card released and re-acquired in the same ante stays locked.
-        ownedItems.forEach(o => { if (o.to !== null && o.to !== undefined && o.to == a - 1) inst.unlock(o.name); });
-        ownedItems.forEach(o => { if (o.from == a) inst.lock(o.name); });
+        ownedItems.forEach(o => { if (o.to !== null && o.to !== undefined && o.to == a - 1) inst.release(o.name); });
+        ownedItems.forEach(o => { if (o.from == a) inst.hold(o.name); });
         var heldNow = ownedItems.filter(o => heldAt(o, a)).map(o => o.name);
         if (heldNow.length > 0) output += "Owned Cards: " + heldNow.join(", ") + "\n";
         var tagList = [];
@@ -924,6 +1073,63 @@
           sixthSense.push(inst.nextSpectral("sixth", a, false));
         }
         output += "Sixth Sense: " + sixthSense.join(", ") + "\n";
+
+        // Perkeo: at the end of each shop, copies one held consumable as a Negative. The
+        // game does pseudorandom_element(G.consumeables.cards, pseudoseed('perkeo')). Unlike
+        // the shop and pack keys, nothing appends the ante here, so it is ONE run-wide stream
+        // ('perkeo') advanced once per shop from the shop you first hold Perkeo, confirmed on
+        // AU4QHS35 (ante 3: shop 1 copied Immolate x3, shop 2 copied Immolate from a 5-card
+        // pool where the per-ante key would have given Cryptid). The pick is an index into
+        // your consumable slots in slot order, so held consumables are listed in acquisition
+        // order. Only shown when Perkeo and at least one consumable are held; entry k is the
+        // k-th shop of this ante.
+        // Perkeo can fire more than once per shop (Blueprint / Brainstorm copies). Each
+        // copy it makes lands in your slots before the next pull, so the pool grows by one
+        // per trigger within the shop. Output is "card@shop/trigger" per entry.
+        // The pool for shop `sh` is every consumable held this ante that was in your slots
+        // by then: cards without a shop (bought before / during the blinds) plus copies from
+        // shops <= sh, in acquisition order. Copies Perkeo already made this shop (recorded
+        // as owned cards with perkeo:true) each count as an extra trigger, and the pick
+        // after them is rolled from a pool that includes them.
+        var perkeo = [];
+        var ownedDirty = false;
+        if (heldNow.includes("Perkeo")) {
+          var numShops = shopsInAnte(a) + 3 * (extraSixth[a] || 0);
+          for (let sh = 1; sh <= numShops; sh++) {
+            // Pool for shop sh = consumables in hand when that shop ends: everything from earlier
+            // antes, cards of this ante with pos <= sh, and Perkeo copies from earlier shops of
+            // this ante. Slot order = acquisition order: earlier antes first, then by position,
+            // with a shop's Perkeo copies after that shop's purchases, then by record order.
+            var slotKey = o => o.perkeo ? (o.shop + 0.5) : (o.pos || 1);
+            var pool = ownedItems
+              .filter(o => heldAt(o, a) && o.name != "Perkeo" && isConsumableName(o.name)
+                && (o.from < a || (o.perkeo ? o.shop < sh : (o.pos || 1) <= sh)))
+              .sort((x, y) => (x.from - y.from) || (slotKey(x) - slotKey(y)) || (parseInt(x.id.slice(1), 10) - parseInt(y.id.slice(1), 10)))
+              .map(o => o.name);
+            if (pool.length == 0) continue;
+            // Extra triggers this shop = copies recorded here that were followed by another
+            // trigger (kept:false). A kept copy is the final trigger's own result.
+            // A recorded copy is by definition what trigger t produced, so its name follows
+            // the computed pick: an upstream change (extra trigger, new consumable) shifts the
+            // stream and the record must shift with it. Refreshed in order, so later pools see it.
+            var recordedHere = ownedItems.filter(o => o.perkeo && o.from == a && o.shop == sh)
+              .sort((x, y) => parseInt(x.id.slice(1), 10) - parseInt(y.id.slice(1), 10));
+            var retriggers = recordedHere.filter(o => !o.kept).length;
+            // One roll per shop; the engine's randint(0, n-1) is floor(roll * n), so the same
+            // roll re-indexed against a bigger pool reproduces what a copied Perkeo produces.
+            var roll = inst.random("perkeo");
+            for (let t = 1; t <= retriggers + 1; t++) {
+              if (PERKEO_PULL_PER_TRIGGER && t > 1) roll = inst.random("perkeo");
+              var pick = pool[Math.floor(roll * pool.length)];
+              perkeo.push(pick + "@" + sh + "/" + t);
+              pool.push(pick);
+              var rec = recordedHere[t - 1];
+              if (rec && rec.name != pick) { rec.name = pick; ownedDirty = true; }
+            }
+          }
+        }
+        if (perkeo.length > 0) output += "Perkeo: " + perkeo.join(", ") + "\n";
+        if (ownedDirty) saveOwnedState();
 
         // Joker / consumable generators, one line per source (see GENERATORS).
         // Each source key is its own per-ante RNG stream, so generating them here

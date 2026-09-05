@@ -13,6 +13,16 @@ void Instance::unlock(std::string item) {
 bool Instance::isLocked(std::string item) {
     return std::find(locked.begin(), locked.end(), item) != locked.end();
 }
+void Instance::hold(std::string item) {
+    held.push_back(item);
+}
+void Instance::release(std::string item) {
+    auto it = std::find(held.begin(), held.end(), item);
+    if (it != held.end()) held.erase(it);
+}
+bool Instance::isHeld(std::string item) {
+    return std::find(held.begin(), held.end(), item) != held.end();
+}
 
 // Lock initializers
 void Instance::initLocks(int ante, bool freshProfile, bool freshRun) {
@@ -172,7 +182,7 @@ void Instance::initUnlocks(int ante, bool freshProfile) {
 // Card Generators
 std::string Instance::nextTarot(std::string source, int ante, bool soulable) {
     std::string anteStr = std::to_string(ante);
-    if (soulable && (params.showman || !isLocked("The Soul")) && random("soul_Tarot"+anteStr) > 0.997) {
+    if (soulable && !isLocked("The Soul") && (params.showman || !isHeld("The Soul")) && random("soul_Tarot"+anteStr) > 0.997) {
         return "The Soul";
     }
     return randchoice("Tarot"+source+anteStr, TAROTS);
@@ -180,7 +190,7 @@ std::string Instance::nextTarot(std::string source, int ante, bool soulable) {
 
 std::string Instance::nextPlanet(std::string source, int ante, bool soulable) {
     std::string anteStr = std::to_string(ante);
-    if (soulable && (params.showman || !isLocked("Black Hole")) && random("soul_Planet"+anteStr) > 0.997) {
+    if (soulable && !isLocked("Black Hole") && (params.showman || !isHeld("Black Hole")) && random("soul_Planet"+anteStr) > 0.997) {
         return "Black Hole";
     }
     return randchoice("Planet"+source+anteStr, PLANETS);
@@ -190,8 +200,8 @@ std::string Instance::nextSpectral(std::string source, int ante, bool soulable) 
     std::string anteStr = std::to_string(ante);
     if (soulable) {
         std::string forcedKey = "RETRY";
-        if ((params.showman || !isLocked("The Soul")) && random("soul_Spectral"+anteStr) > 0.997) forcedKey = "The Soul";
-        if ((params.showman || !isLocked("Black Hole")) && random("soul_Spectral"+anteStr) > 0.997) forcedKey = "Black Hole";
+        if (!isLocked("The Soul") && (params.showman || !isHeld("The Soul")) && random("soul_Spectral"+anteStr) > 0.997) forcedKey = "The Soul";
+        if (!isLocked("Black Hole") && (params.showman || !isHeld("Black Hole")) && random("soul_Spectral"+anteStr) > 0.997) forcedKey = "Black Hole";
         if (forcedKey != "RETRY") return forcedKey;
     }
     return randchoice("Spectral"+source+anteStr, SPECTRALS);
@@ -393,27 +403,27 @@ std::vector<std::string> Instance::nextArcanaPack(int size, int ante) {
         if (isVoucherActive("Omen Globe") && random("omen_globe") > 0.8) {
             pack.push_back(nextSpectral("ar2", ante, true));
         } else pack.push_back(nextTarot("ar1", ante, true));
-        if (!params.showman) lock(pack[i]);
+        hold(pack[i]);
     }
-    for (int i = 0; i < size; i++) unlock(pack[i]);
+    for (int i = 0; i < size; i++) release(pack[i]);
     return pack;
 }
 std::vector<std::string> Instance::nextCelestialPack(int size, int ante) {
     std::vector<std::string> pack;
     for (int i = 0; i < size; i++) {
         pack.push_back(nextPlanet("pl1", ante, true));
-        if (!params.showman) lock(pack[i]);
+        hold(pack[i]);
     }
-    for (int i = 0; i < size; i++) unlock(pack[i]);
+    for (int i = 0; i < size; i++) release(pack[i]);
     return pack;
 }
 std::vector<std::string> Instance::nextSpectralPack(int size, int ante) {
     std::vector<std::string> pack;
     for (int i = 0; i < size; i++) {
         pack.push_back(nextSpectral("spe", ante, true));
-        if (!params.showman) lock(pack[i]);
+        hold(pack[i]);
     }
-    for (int i = 0; i < size; i++) unlock(pack[i]);
+    for (int i = 0; i < size; i++) release(pack[i]);
     return pack;
 }
 std::vector<Card> Instance::nextStandardPack(int size, int ante) {
@@ -427,9 +437,9 @@ std::vector<JokerData> Instance::nextBuffoonPack(int size, int ante) {
     std::vector<JokerData> pack;
     for (int i = 0; i < size; i++) {
         pack.push_back(nextJoker("buf", ante, true));
-        if (!params.showman) lock(pack[i].joker);
+        hold(pack[i].joker);
     }
-    for (int i = 0; i < size; i++) unlock(pack[i].joker);
+    for (int i = 0; i < size; i++) release(pack[i].joker);
     return pack;
 }
 // Misc

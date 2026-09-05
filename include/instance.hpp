@@ -32,7 +32,12 @@ struct InstParams {
 };
 
 struct Instance {
+    // Two kinds of exclusion. `locked` is permanent for the run: profile unlocks, ante
+    // gating, vouchers already bought. `held` is what you currently hold (owned Jokers and
+    // consumables, and duplicates within a pack being generated). The game's Showman only
+    // waives the second kind, so Showman never lets a locked item through.
     std::vector<std::string> locked;
+    std::vector<std::string> held;
     std::string seed;
     double hashedSeed;
     Cache cache;
@@ -72,13 +77,13 @@ struct Instance {
     std::string randchoice(std::string ID, std::vector<std::string> items) {
         rng = LuaRandom(get_node(ID));
         std::string item = items[rng.randint(0, items.size()-1)];
-        if ((params.showman == false && isLocked(item)) || item == "RETRY") {
+        if (isLocked(item) || (params.showman == false && isHeld(item)) || item == "RETRY") {
             int resample = 2;
             while (true) {
                 rng = LuaRandom(get_node(ID+"_resample"+std::to_string(resample)));
                 std::string item = items[rng.randint(0, items.size()-1)];
                 resample++;
-                if ((item != "RETRY" && !isLocked(item)) || resample > 1000) return item;
+                if ((item != "RETRY" && !isLocked(item) && (params.showman || !isHeld(item))) || resample > 1000) return item;
             }
         }
         return item;
@@ -99,6 +104,9 @@ struct Instance {
     void lock(std::string item);
     void unlock(std::string item);
     bool isLocked(std::string item);
+    void hold(std::string item);
+    void release(std::string item);
+    bool isHeld(std::string item);
     void initLocks(int ante, bool freshProfile, bool freshRun);
     void initUnlocks(int ante, bool freshProfile);
     std::string nextTarot(std::string source, int ante, bool soulable);
