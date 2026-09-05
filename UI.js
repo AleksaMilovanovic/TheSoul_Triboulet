@@ -379,6 +379,11 @@ function searchAndHighlight() {
         background-color: #2f3f33;
         border-color: #5a7a62;
     }
+    /* A Negative Joker inside: yellow outline on the row and its group */
+    .collapsibleTitle.hasNegative {
+        border-color: #ffd54a;
+        box-shadow: 0 0 0 1px #ffd54a, 0 0 8px rgba(255, 213, 74, 0.45);
+    }
     .generatorGroupTitle:hover {
         background-color: #3a4f40;
     }
@@ -544,6 +549,7 @@ function searchAndHighlight() {
         text-transform: uppercase;
         letter-spacing: 0.5px;
     }
+    .rarityNone      { visibility: hidden; }
     .rarityCommon    { color: #009dff; }
     .rarityUncommon  { color: #4bc292; }
     .rarityRare      { color: #fe5f55; }
@@ -1279,16 +1285,13 @@ function searchAndHighlight() {
         queueItem.className = 'queueItem';
 
         const itemType = determineItemType(cardName);
-        // Rarity label above Jokers (Common / Uncommon / Rare / Legendary)
-        if (itemType === 'joker') {
-            const rarity = jokerRarity(cardName);
-            if (rarity) {
-                const rarityEl = document.createElement('div');
-                rarityEl.className = 'rarityLabel rarity' + rarity;
-                rarityEl.textContent = rarity;
-                queueItem.appendChild(rarityEl);
-            }
-        }
+        // Rarity row above every tile. Jokers show Common / Uncommon / Rare / Legendary;
+        // consumables get an empty row of the same height so all sprites line up.
+        const rarity = itemType === 'joker' ? jokerRarity(cardName) : null;
+        const rarityEl = document.createElement('div');
+        rarityEl.className = 'rarityLabel' + (rarity ? ' rarity' + rarity : ' rarityNone');
+        rarityEl.textContent = rarity || '\u00A0';
+        queueItem.appendChild(rarityEl);
         queueItem.appendChild(itemType !== 'unknown'
             ? makeCardSprite(cardName, itemType, itemModifiers, itemStickers)
             : spriteStack(71, 95));
@@ -2036,10 +2039,17 @@ function searchAndHighlight() {
             ].forEach(({ group, heading }) => {
                 const rows = generators.filter(g => g.group === group && g.cards.length > 0);
                 if (rows.length === 0) return;
-                createCollapsible(queueContainer, title + ':gen:' + group, heading + ' (' + rows.length + ')', (groupBody) => {
+                // A Negative Joker anywhere in a row highlights that row and its group, so a
+                // collapsed panel still tells you it is worth expanding.
+                const hasNegative = cards => cards.some(c => parseCardItem(c).itemModifiers.includes('Negative'));
+                const negativeRows = rows.filter(r => hasNegative(r.cards)).length;
+                const groupLabel = heading + ' (' + rows.length + ')' + (negativeRows > 0 ? ' \u2605 Negative' : '');
+                const groupBodyEl = createCollapsible(queueContainer, title + ':gen:' + group, groupLabel, (groupBody) => {
                     groupBody.className = 'generatorGroup';
                     rows.forEach(({ label, hint, cards }) => {
-                        const rowBody = createCollapsible(groupBody, title + ':' + label, label + ' (' + cards.length + ')', (body) => {
+                        const negCount = cards.filter(c => parseCardItem(c).itemModifiers.includes('Negative')).length;
+                        const rowLabel = label + ' (' + cards.length + ')' + (negCount > 0 ? ' \u2605 ' + negCount + ' Negative' : '');
+                        const rowBody = createCollapsible(groupBody, title + ':' + label, rowLabel, (body) => {
                             const generatorScrollable = document.createElement('div');
                             generatorScrollable.className = 'scrollable no-select';
                             cards.forEach((card, idx) => {
@@ -2052,8 +2062,10 @@ function searchAndHighlight() {
                             attachDragScroll(generatorScrollable);
                         });
                         if (hint) rowBody.previousSibling.title = hint;
+                        if (negCount > 0) rowBody.previousSibling.classList.add('hasNegative');
                     });
                 }, 'generatorGroupTitle');
+                if (negativeRows > 0) groupBodyEl.previousSibling.classList.add('hasNegative');
             });
 
             if (packs.length > 0) {
