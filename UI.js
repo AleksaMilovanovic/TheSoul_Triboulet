@@ -666,6 +666,16 @@ function searchAndHighlight() {
         padding-left: 8px;
         margin-left: 4px;
     }
+    /* The shop you are standing in, taken from an imported save */
+    .queueItem.currentShop, .packItem.currentShop {
+        background-color: rgba(120, 180, 255, 0.10);
+        box-shadow: inset 0 0 0 1px rgba(120, 180, 255, 0.55);
+        border-radius: 3px;
+    }
+    .currentShopBadge {
+        color: #9ec5ff;
+        font-weight: bold;
+    }
 
     /* Perkeo copies: gap between shops, marker under extra triggers */
     .perkeoCopy.perkeoShopStart {
@@ -976,6 +986,7 @@ function searchAndHighlight() {
                 const title = titleMatch ? titleMatch[0] : 'Untitled';
                 const bossMatch = match.match(/Boss: (.+)/);
                 const voucherMatch = match.match(/Voucher: (.+)/);
+                const resumedMatch = match.match(/^Resumed from save: (.+)/m);
                 const tagsMatch = match.match(/Tags: (.+)/);
                 const sixthMatch = match.match(/Sixth Sense: (.+)/);
                 const perkeoMatch = match.match(/^Perkeo: (.+)/m);
@@ -991,6 +1002,7 @@ function searchAndHighlight() {
                     }
                 });
                 const queueMatch = match.match(/Shop Queue[^:\n]*:([\s\S]*?)(?=Packs:|$)/);
+                const currentShopMatch = match.match(/^Current Shop: (.*)$/m);
                 const packsMatch = match.match(/Packs:([\s\S]*?)(?=(?:==ANTE \d+==|$))/);
 
                 const boss = bossMatch ? bossMatch[1].trim() : '';
@@ -1002,10 +1014,11 @@ function searchAndHighlight() {
                     const m = e.trim().match(/^(.*)@(\d+)\/(\d+)$/);
                     return m ? { card: m[1], shop: parseInt(m[2], 10), trigger: parseInt(m[3], 10) } : { card: e.trim(), shop: 0, trigger: 1 };
                 }) : [];
-                const queue = queueMatch ? queueMatch[1].trim().split('\n').filter(item => item.trim() !== '') : [];
+                const queue = queueMatch ? queueMatch[1].trim().split('\n').filter(item => item.trim() !== '' && !item.startsWith('Current Shop:')) : [];
+                const currentShopCount = currentShopMatch ? currentShopMatch[1].split(',').filter(x => x.trim()).length : 0;
                 const packs = packsMatch ? packsMatch[1].trim().split('\n').filter(item => item.trim() !== '') : [];
 
-                shopQueues.push({ title, queue, boss, voucher, tags, sixthSense, perkeo, generators, packs, raw: match });
+                shopQueues.push({ title, queue, boss, voucher, tags, sixthSense, perkeo, generators, packs, resumed: resumedMatch ? resumedMatch[1].trim() : null, currentShopCount, raw: match });
             });
         }
 
@@ -1235,9 +1248,9 @@ function searchAndHighlight() {
             if (existing) { existing.remove(); return; }
             const menu = document.createElement('div');
             menu.className = 'deckAddMenu';
-            const rounds = (ds.rounds[anteNum] || []).length || 3;
+            const roundNums = (ds.rounds[anteNum] || []).map((rd, i) => rd.round || (i + 1));
             const opts = [];
-            for (let r = 2; r <= rounds; r++) opts.push({ label: 'From round ' + r, a: anteNum, r });
+            (roundNums.length ? roundNums : [1, 2, 3]).filter(r => r >= 2).forEach(r => opts.push({ label: 'From round ' + r, a: anteNum, r }));
             opts.push({ label: 'From ante ' + (anteNum + 1), a: anteNum + 1, r: 1 });
             opts.forEach(o => {
                 const b = document.createElement('button');
@@ -1326,7 +1339,7 @@ function searchAndHighlight() {
         scrollingContainer.innerHTML = ''; // Clear previous content
         loadSeenState();
 
-        shopQueues.forEach(({ title, queue, boss, voucher, tags, sixthSense, perkeo, generators, packs, raw }) => {
+        shopQueues.forEach(({ title, queue, boss, voucher, tags, sixthSense, perkeo, generators, packs, resumed, currentShopCount, raw }) => {
             const anteNum = parseInt((title.match(/\d+/) || ['0'])[0], 10);
             const os = window.ownedState;
             const vs = window.voucherState;
@@ -1343,7 +1356,8 @@ function searchAndHighlight() {
             // Whole ante is collapsible; its contents are only built on first expand.
             const anteLabel = title.replace(/=/g, '').trim()
                 + (boss ? '  |  Boss: ' + boss : '')
-                + (voucher ? '  |  Voucher: ' + voucher : '');
+                + (voucher ? '  |  Voucher: ' + voucher : '')
+                + (resumed ? '  |  \u23EF Resumed from save' : '');
             createCollapsible(anteBox, title, anteLabel, (queueContainer) => {
 
             const queueInfo = document.createElement('div');
@@ -1857,11 +1871,11 @@ function searchAndHighlight() {
                     const rankSel = remember(mkSelect(CARD_RANKS), 'deck:rank');
                     const suitSel = remember(mkSelect(CARD_SUITS), 'deck:suit');
                     const fromOpts = [];
-                    anteRounds.forEach((_, i) => fromOpts.push({ v: anteNum + ':' + (i + 1), t: 'From round ' + (i + 1) }));
+                    anteRounds.forEach((rd, i) => { const r = rd.round || (i + 1); fromOpts.push({ v: anteNum + ':' + r, t: 'From round ' + r }); });
                     fromOpts.push({ v: (anteNum + 1) + ':1', t: 'From ante ' + (anteNum + 1) });
                     const fromSel = document.createElement('select');
                     fromOpts.forEach(o => { const opt = document.createElement('option'); opt.value = o.v; opt.textContent = o.t; fromSel.appendChild(opt); });
-                    fromSel.value = anteNum + ':2';
+                    fromSel.value = fromOpts.length > 1 ? fromOpts[Math.min(1, fromOpts.length - 2)].v : fromOpts[0].v;
                     remember(fromSel, 'deck:from:' + anteNum);
                     const addBtn = document.createElement('button');
                     addBtn.className = 'smallButton';
@@ -1913,10 +1927,16 @@ function searchAndHighlight() {
                     body.appendChild(note);
 
                     // Changes that take effect in this ante, each with an undo.
-                    const anteOps = ds.ops.filter(op => op.ante === anteNum);
-                    if (anteOps.length > 0) {
+                    const anteOpsAll = ds.ops.filter(op => op.ante === anteNum);
+                    const saveOps = anteOpsAll.filter(op => op.save), anteOps = anteOpsAll.filter(op => !op.save);
+                    if (anteOpsAll.length > 0) {
                         const opsList = document.createElement('div');
                         opsList.className = 'deckOps';
+                        if (saveOps.length > 0) {
+                            const row = document.createElement('div');
+                            row.textContent = 'Deck loaded from save: ' + saveOps.filter(o => o.type === 'add').length + ' cards from round ' + saveOps[0].round + ' (replaces the starting deck)';
+                            opsList.appendChild(row);
+                        }
                         anteOps.forEach(op => {
                             const row = document.createElement('div');
                             row.textContent = (op.type === 'add' ? 'Added ' : 'Removed ') + op.name + ' from round ' + op.round + ' ';
@@ -1931,14 +1951,14 @@ function searchAndHighlight() {
                     }
 
                     anteRounds.forEach((rd, ri) => {
-                        const r = ri + 1;
-                        const roundLabel = 'Round ' + r + ' (' + rd.cards.length + ' cards, hand ' + rd.hand + ')';
+                        const r = rd.round || (ri + 1);
+                        const roundLabel = 'Round ' + r + (rd.blind ? ' / ' + rd.blind + ' Blind' : '') + ' (' + rd.cards.length + ' cards, hand ' + rd.hand + ')';
                         createCollapsible(body, title + ':deck:' + r, roundLabel, (rb) => {
                             const scroll = document.createElement('div');
                             scroll.className = 'scrollable no-select';
                             // A card destroyed during round r is gone from the next round on.
-                            const nextA = r < anteRounds.length ? anteNum : anteNum + 1;
-                            const nextR = r < anteRounds.length ? r + 1 : 1;
+                            const nextA = ri < anteRounds.length - 1 ? anteNum : anteNum + 1;
+                            const nextR = ri < anteRounds.length - 1 ? (anteRounds[ri + 1].round || (ri + 2)) : 1;
                             rd.cards.forEach((card, idx) => {
                                 const tile = makeDeckCardTile(card, idx + 1, idx < rd.hand);
                                 tile.classList.add('clickable');
@@ -2002,6 +2022,10 @@ function searchAndHighlight() {
                 queue.forEach((item, idx) => {
                     const tile = createQueueItem(item);
                     if (idx > 0 && idx % shopSlots === 0) tile.classList.add('frameStart');
+                    if (currentShopCount && idx < currentShopCount) {
+                        tile.classList.add('currentShop');
+                        if (idx === 0) { const badge = document.createElement('div'); badge.className = 'modifier currentShopBadge'; badge.textContent = 'On screen now'; tile.appendChild(badge); }
+                    }
                     attachSeenToggle(tile, shopKey(idx), (e) => { if (e.shiftKey) { markUpTo(idx); return true; } return false; }, refresh);
                     attachOwnToggle(tile, parseCardItem(item).cardName, anteNum);
                     const upTo = document.createElement('button');
@@ -2087,6 +2111,10 @@ function searchAndHighlight() {
 
                     const packNameElement = document.createElement('div');
                     packNameElement.textContent = packName + ': ';
+                    if (packCards.length === 1 && /^\(on screen now/.test(packCards[0])) {
+                        packItem.classList.add('currentShop');
+                        const note = document.createElement('div'); note.className = 'modifier currentShopBadge'; note.textContent = packCards[0].replace(/[()]/g, ''); packItem.appendChild(packNameElement); packItem.appendChild(note); packsContainer.appendChild(packItem); return;
+                    }
                     packNameElement.classList.add('packName');
                     packItem.appendChild(packNameElement);
 

@@ -70,6 +70,16 @@ struct Instance {
             else ++it;
         }
     }
+    // Read / write a stream's raw state without advancing it. A Balatro save stores every
+    // stream in GAME.pseudorandom as exactly this value, so setNode() lets an analysis resume
+    // from a save: the next get_node() then yields the same value the game would roll next.
+    double peekNode(std::string ID) {
+        if (cache.nodes.count(ID) == 0) return -1;
+        return cache.nodes[ID];
+    }
+    void setNode(std::string ID, double value) {
+        cache.nodes[ID] = value;
+    }
     int randint(std::string ID, int min, int max) {
         rng = LuaRandom(get_node(ID));
         return rng.randint(min, max);

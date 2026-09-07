@@ -254,6 +254,17 @@
       margin-top: 6px;
     }
 
+    .importStatus {
+      font-size: 0.85em;
+      margin: 4px auto 0;
+      max-width: 520px;
+      color: #333333;
+      white-space: pre-line;
+    }
+    .importStatus.error {
+      color: #b00020;
+    }
+
     .clearfix::after {
       content: "";
       clear: both;
@@ -329,6 +340,9 @@
         </select>
         <br>
         <button id="openCheckboxesBtn">Modify Unlocks</button>
+        <button id="importSaveBtn" title="Load a Balatro save.jkr: fills seed, deck, stake, ante, owned Jokers and consumables, your current deck, and resumes every RNG stream from the save">Import Save (.jkr)</button>
+        <input type="file" id="importSaveFile" accept=".jkr" style="display:none">
+        <div id="importSaveStatus" class="importStatus"></div>
         <div id="checkboxesOverlay">
           <div id="checkboxesPopup">
             <h2>Unlocked Items</h2>
@@ -667,10 +681,12 @@
     // The run-start shuffle therefore does not consume a pull from this stream.
     const DRAW_RUN_START_SHUFFLE = false;
     const DRAW_FROM_END = true;
-    // Perkeo firing more than once in one shop (Blueprint / Brainstorm): observed in-game to
-    // reuse the shop's single 'perkeo' roll, so the extra copies re-index that same value
-    // against the pool grown by the earlier copies. Set true to give each trigger its own pull.
-    const PERKEO_PULL_PER_TRIGGER = false;
+    // Perkeo firing more than once in one shop (Blueprint / Brainstorm): each trigger queues
+    // its own event calling pseudoseed('perkeo'), so each copy takes a fresh pull from the
+    // run-wide stream against the pool grown by the earlier copies. Confirmed by a save at
+    // ante 21 whose 'perkeo' stream had advanced 274 times: far more than one per shop.
+    // (Both models fit the earlier hand observations; the save count separates them.)
+    const PERKEO_PULL_PER_TRIGGER = true;
     var deckOps = [];        // { type:'add', id, name, ante, round, seq } | { type:'remove', target, ante, round, seq }
     var deckRounds = {};     // ante -> [{ hand, cards: [{ id, name }] }], rebuilt by performAnalysis
     var extraRounds = {};    // ante -> extra rounds revealed (replaying an ante after Hieroglyph/Petroglyph)
@@ -770,6 +786,222 @@
       moreRounds: function(ante) { extraRounds[ante] = (extraRounds[ante] || 0) + 1; deckChanged(); },
       resetRounds: function(ante) { delete extraRounds[ante]; deckChanged(); }
     };
+
+    // ---- Save import (Balatro save.jkr) ----
+    // A save is a raw DEFLATE stream around a Lua table literal. Importing one fills the
+    // run settings, replaces the owned cards and tracked deck with the save's contents, and
+    // stores every RNG stream value from GAME.pseudorandom. Analysis then starts at the
+    // saved ante with those streams restored, so the first rolls it shows are the ones the
+    // game will make next. Antes before the save are not shown: their streams are spent.
+    var saveResume = null; // see importSave() for the fields
+    var saveResumeKey = null;
+    function resumeStoreKey(seed, deck) { return 'theSoulResume:' + seed + ':' + deck; }
+    function saveResumeState() { try { if (saveResume) localStorage.setItem(saveResumeKey, JSON.stringify(saveResume)); else if (saveResumeKey) localStorage.removeItem(saveResumeKey); } catch (e) { /* page-only */ } }
+    function loadResumeState(seed, deck) {
+      var key = resumeStoreKey(seed, deck);
+      if (key == saveResumeKey) return;
+      saveResumeKey = key; saveResume = null;
+      try { var st = JSON.parse(localStorage.getItem(key)); if (st && st.nodes) saveResume = st; } catch (e) { /* start clean */ }
+    }
+    window.saveResume = {
+      get active() { return saveResume; },
+      forget: function() { saveResume = null; saveResumeState(); performAnalysis(); }
+    };
+
+    async function inflateRaw(buf) {
+      const ds = new DecompressionStream('deflate-raw');
+      const stream = new Blob([buf]).stream().pipeThrough(ds);
+      return new Uint8Array(await new Response(stream).arrayBuffer());
+    }
+
+    // Minimal parser for the Lua table literal Balatro writes (strings, numbers, booleans,
+    // nested tables with [key]= or bare-word keys).
+    function parseLuaTable(t) {
+      let i = 0;
+      const ws = () => { while (i < t.length && ' \t\r\n'.includes(t[i])) i++; };
+      const val = () => {
+        ws();
+        const c = t[i];
+        if (c === '{') return table();
+        if (c === '"') {
+          i++; let out = '';
+          while (t[i] !== '"') {
+            if (t[i] === '\\') { i++; const e = t[i]; out += ({ n: '\n', t: '\t', '"': '"', '\\': '\\', '/': '/' })[e] || e; i++; }
+            else out += t[i++];
+          }
+          i++; return out;
+        }
+        const m = /^-?\d+(\.\d+)?([eE][-+]?\d+)?/.exec(t.slice(i, i + 40));
+        if (m) { i += m[0].length; return Number(m[0]); }
+        for (const [lit, v] of [['true', true], ['false', false], ['nil', null]]) if (t.startsWith(lit, i)) { i += lit.length; return v; }
+        throw new Error('Unexpected token at ' + i + ': ' + t.slice(i, i + 30));
+      };
+      const table = () => {
+        i++; const d = {};
+        for (;;) {
+          ws();
+          if (t[i] === '}') { i++; return d; }
+          let k;
+          if (t[i] === '[') { i++; k = val(); ws(); if (t[i] !== ']') throw new Error('Expected ] at ' + i); i++; }
+          else { const m = /^[A-Za-z_]\w*/.exec(t.slice(i, i + 80)); k = m[0]; i += k.length; }
+          ws(); if (t[i] !== '=') throw new Error('Expected = at ' + i); i++;
+          d[k] = val(); ws();
+          if (t[i] === ',') i++;
+        }
+      };
+      ws(); if (t.startsWith('return', i)) i += 6;
+      return val();
+    }
+
+    const SAVE_DECKS = { b_red: 'Red Deck', b_blue: 'Blue Deck', b_yellow: 'Yellow Deck', b_green: 'Green Deck', b_black: 'Black Deck', b_magic: 'Magic Deck', b_nebula: 'Nebula Deck', b_ghost: 'Ghost Deck', b_abandoned: 'Abandoned Deck', b_checkered: 'Checkered Deck', b_zodiac: 'Zodiac Deck', b_painted: 'Painted Deck', b_anaglyph: 'Anaglyph Deck', b_plasma: 'Plasma Deck', b_erratic: 'Erratic Deck' };
+    const SAVE_STAKES = ['White Stake', 'Red Stake', 'Green Stake', 'Black Stake', 'Blue Stake', 'Purple Stake', 'Orange Stake', 'Gold Stake'];
+    // Save names that differ from the engine's spelling
+    const SAVE_NAME_FIX = { 'Mail-In Rebate': 'Mail In Rebate', "Driver's License": 'Drivers License', 'Riff-Raff': 'Riff-raff' };
+    const SAVE_ENHANCEMENTS = { m_bonus: 'Bonus', m_mult: 'Mult', m_wild: 'Wild', m_glass: 'Glass', m_steel: 'Steel', m_stone: 'Stone', m_gold: 'Gold', m_lucky: 'Lucky' };
+    const SAVE_EDITIONS = { foil: 'Foil', holo: 'Holographic', polychrome: 'Polychrome', negative: 'Negative' };
+
+    // Save keys -> engine names for bosses, tags, and vouchers. Built from the engine lists:
+    // "The Wall" -> bl_wall, "Amber Acorn" -> bl_final_acorn, "Charm Tag" -> tag_charm, etc.
+    const SAVE_BOSS_KEYS = { bl_final_acorn: 'Amber Acorn', bl_final_bell: 'Cerulean Bell', bl_final_heart: 'Crimson Heart', bl_final_leaf: 'Verdant Leaf', bl_final_vessel: 'Violet Vessel' };
+    const SAVE_TAG_KEYS = { tag_top_up: 'Top-up Tag', tag_d_six: 'D6 Tag' };
+    const SAVE_VOUCHER_KEYS = { v_overstock_norm: 'Overstock', v_overstock_plus: 'Overstock Plus', v_directors_cut: "Director's Cut" };
+    function saveNameTables() {
+      const boss = Object.assign({}, SAVE_BOSS_KEYS), tag = Object.assign({}, SAVE_TAG_KEYS), voucher = Object.assign({}, SAVE_VOUCHER_KEYS);
+      const slug = n => n.toLowerCase().replace(/'/g, '').replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+      for (let i = 0; i < Immolate.BOSSES.size(); i++) { const n = Immolate.BOSSES.get(i); if (n.startsWith('The ')) boss['bl_' + slug(n.slice(4))] = n; }
+      for (let i = 0; i < Immolate.TAGS.size(); i++) { const n = Immolate.TAGS.get(i); const k = 'tag_' + slug(n.replace(/ Tag$/, '')); if (!Object.values(tag).includes(n)) tag[k] = n; }
+      for (let i = 0; i < Immolate.VOUCHERS.size(); i++) { const n = Immolate.VOUCHERS.get(i); const k = 'v_' + slug(n); if (!Object.values(voucher).includes(n)) voucher[k] = n; }
+      return { boss, tag, voucher };
+    }
+
+    function cardsOf(save, area) {
+      const c = (save.cardAreas[area] || {}).cards || {};
+      return Object.keys(c).map(k => c[k]).sort((x, y) => (x.rank || 0) - (y.rank || 0));
+    }
+
+    async function importSave(file) {
+      const status = document.getElementById('importSaveStatus');
+      status.classList.remove('error');
+      status.textContent = 'Reading ' + file.name + '...';
+      try {
+        const bytes = await inflateRaw(await file.arrayBuffer());
+        const save = parseLuaTable(new TextDecoder().decode(bytes));
+        const G = save.GAME;
+        const pr = G.pseudorandom || {};
+        const seed = pr.seed;
+        if (!seed) throw new Error('No seed in save (GAME.pseudorandom.seed)');
+        const ante = G.round_resets.ante;
+        const deckName = SAVE_DECKS[(save.BACK && save.BACK.key) || (G.selected_back_key && G.selected_back_key.key)] || 'Red Deck';
+        const stakeName = SAVE_STAKES[(G.stake || 1) - 1] || 'White Stake';
+        const version = String(save.VERSION || '');
+        const versionSel = document.getElementById('version');
+        const versionVal = version.startsWith('1.0.1') && version >= '1.0.1f' ? '10106' : version.startsWith('1.0.1') ? '10103' : '10014';
+        // Run position within the ante: how many blinds are defeated decides which shop
+        // comes next. States: Small/Big/Boss each Upcoming | Current | Defeated | Skipped.
+        const bs = G.round_resets.blind_states || {};
+        const done = ['Small', 'Big', 'Boss'].filter(b => bs[b] === 'Defeated' || bs[b] === 'Skipped').length;
+        const inShop = save.STATE === 5;  // G.STATES.SHOP
+
+        // Settings
+        document.getElementById('seed').value = seed;
+        document.getElementById('deck').value = deckName;
+        document.getElementById('stake').value = stakeName;
+        versionSel.value = versionVal;
+        document.getElementById('ante').value = Math.max(parseInt(document.getElementById('ante').value, 10) || 0, ante + 4);
+
+        // Owned Jokers / consumables: replace with the save's, all held from this ante,
+        // in slot order (rank), so Perkeo pools and rerolls match the game.
+        loadOwnedState(seed, deckName);
+        ownedItems.length = 0; ownedSeq = 0;
+        const addOwned = (c, extra) => { ownedSeq++; const name = SAVE_NAME_FIX[c.ability.name] || c.ability.name; ownedItems.push(Object.assign({ id: 'o' + ownedSeq, name: name, from: ante, to: null, pos: 1 }, extra || {})); return name; };
+        const jokers = cardsOf(save, 'jokers').map(c => addOwned(c, c.edition && c.edition.type === 'negative' ? { negative: true } : null));
+        const consumables = cardsOf(save, 'consumeables').map(c => addOwned(c, c.edition && c.edition.type === 'negative' ? { negative: true } : null));
+        ownedShowman = jokers.includes('Showman');
+        saveOwnedState();
+
+        // Vouchers: mark everything in used_vouchers as bought before this ante
+        Object.keys(voucherPurchases).forEach(k => delete voucherPurchases[k]);
+        const names = saveNameTables();
+        const vouchersFound = [], vouchersUnknown = [];
+        Object.keys(G.used_vouchers || {}).forEach(k => { if (names.voucher[k]) { voucherPurchases[names.voucher[k]] = Math.max(1, ante - 1); vouchersFound.push(names.voucher[k]); } else vouchersUnknown.push(k); });
+
+        // Deck: replace the tracked deck with the save's cards in sort_id order. The starting
+        // 52 are dropped (deckOps 'remove' on every s#) and the save's cards added from the
+        // current round, so every listed round shuffles exactly this deck.
+        loadDeckState(seed, deckName);
+        deckOps.length = 0; deckSeq = 0; deckHandAdjust = 0;
+        Object.keys(extraRounds).forEach(k => delete extraRounds[k]);
+        const inst0 = new Immolate.Instance(seed);
+        const startCount = startingDeck(inst0, deckName).length; inst0.delete();
+        const roundNow = inShop ? done + 1 : Math.max(1, done + 1);
+        for (let i = 0; i < startCount; i++) { deckSeq++; deckOps.push({ type: 'remove', target: 's' + i, name: 'starting card', ante: ante, round: roundNow, seq: deckSeq, save: true }); }
+        const playing = ['deck', 'hand', 'discard', 'play'].flatMap(a => cardsOf(save, a)).sort((x, y) => (x.sort_id || 0) - (y.sort_id || 0));
+        playing.forEach(c => {
+          const enh = SAVE_ENHANCEMENTS[(c.save_fields || {}).center] ; const ed = c.edition && SAVE_EDITIONS[c.edition.type]; const seal = c.seal ? c.seal + ' Seal' : '';
+          const name = (seal ? seal + ' ' : '') + (ed ? ed + ' ' : '') + (enh ? enh + ' ' : '') + c.base.value + ' of ' + c.base.suit;
+          deckSeq++; deckOps.push({ type: 'add', id: 'c' + deckSeq, name: name, ante: ante, round: roundNow, seq: deckSeq, save: true });
+        });
+        const handSizeSaved = (save.cardAreas.hand && save.cardAreas.hand.config && save.cardAreas.hand.config.card_limit) || 8;
+        const handBase = 8 + (deckName === 'Painted Deck' ? 2 : 0) + (vouchersFound.includes('Paint Brush') ? 1 : 0) + (vouchersFound.includes('Palette') ? 1 : 0);
+        deckHandAdjust = handSizeSaved - handBase;
+        saveDeckState();
+
+        // RNG streams: every numeric entry in GAME.pseudorandom is a stream's current state
+        const nodes = {}; let n = 0;
+        Object.keys(pr).forEach(k => { if (typeof pr[k] === 'number' && k !== 'hashed_seed') { nodes[k] = pr[k]; n++; } });
+        // The saved ante's boss, voucher and tags were rolled when the ante began; read them
+        // from the save rather than re-rolling (their streams already sit past that roll).
+        const bossKey = (G.round_resets.blind_choices || {}).Boss;
+        const boss = names.boss[bossKey] || bossKey || '';
+        const bt = G.round_resets.blind_tags || {};
+        const tags = ['Small', 'Big'].map(b => names.tag[bt[b]] || bt[b] || '');
+        const shopVoucher = cardsOf(save, 'shop_vouchers').map(c => c.ability.name)[0] || '';
+        // The shop you are standing in (STATE 5): its cards and packs are already rolled and
+        // on screen, so they are shown as the first frame from the save rather than rerolled.
+        const fixName = n => SAVE_NAME_FIX[n] || n;
+        const cardLabel = c => {
+          const ab = c.ability || {}; const ed = c.edition && SAVE_EDITIONS[c.edition.type];
+          return (ab.eternal ? 'Eternal ' : '') + (ab.perishable ? 'Perishable ' : '') + (ab.rental ? 'Rental ' : '') + (ed ? ed + ' ' : '') + fixName(ab.name);
+        };
+        const currentShop = inShop ? { cards: cardsOf(save, 'shop_jokers').map(cardLabel), packs: cardsOf(save, 'shop_booster').map(c => fixName(c.ability.name)) } : null;
+        // Which shop of this ante comes next: after `done` defeated/skipped blinds. From ante 2
+        // the shop after the previous Boss is shop 1, so the next shop is done+1 (ante 1: done).
+        // Shops of this ante already rolled: ante 1 has none before the Small Blind; from ante
+        // 2 the shop after the previous Boss is shop 1. Whether we are standing in a shop or
+        // have left it, that shop's cards and packs are rolled. Perkeo fires when a shop ends,
+        // so a shop we are standing in still has its Perkeo pull ahead.
+        const shopsRolled = (ante === 1 ? done : done + 1);          // shops whose cards/packs are already rolled
+        const perkeoFirstShop = inShop ? shopsRolled : shopsRolled + 1; // Perkeo fires when a shop ends
+        const remainingBlinds = ['Small', 'Big', 'Boss'].map((b, i) => ({ b, r: i + 1 })).filter(x => bs[x.b] !== 'Defeated' && bs[x.b] !== 'Skipped');
+        // Boss pool: eligible bosses with more uses than the least-used eligible one are out.
+        const used = G.bosses_used || {};
+        const lockedBosses = [];
+        [true, false].forEach(showdown => {
+          const elig = Object.keys(used).filter(k => (k.startsWith('bl_final_') === showdown) && names.boss[k]);
+          if (elig.length === 0) return;
+          const min = Math.min(...elig.map(k => used[k]));
+          elig.forEach(k => { if (used[k] > min) lockedBosses.push(names.boss[k]); });
+        });
+        saveResumeKey = resumeStoreKey(seed, deckName);
+        saveResume = { ante: ante, seed: seed, nodes: nodes, boss: boss, voucher: shopVoucher, voucherTaken: shopVoucher === '' && inShop, tags: tags, roundsDone: done, inShop: inShop,
+          remainingRounds: remainingBlinds.map(x => x.r), remainingBlindNames: remainingBlinds.map(x => x.b),
+          shopsRolled: shopsRolled, perkeoFirstShop: perkeoFirstShop, lockedBosses: lockedBosses, currentShop: currentShop,
+          label: file.name + ': seed ' + seed + ', ' + deckName + ', ' + stakeName + ', ante ' + ante + (inShop ? ', in the shop after the ' + (['Small', 'Big', 'Boss'][done - 1] || 'previous Boss') + ' Blind' : ', ' + (['Small', 'Big', 'Boss'][done] || 'next ante') + ' Blind next') };
+
+        saveResumeState();
+        status.textContent = 'Imported ' + saveResume.label + '.\n'
+          + jokers.length + ' Jokers, ' + consumables.length + ' consumables, ' + playing.length + ' deck cards, ' + vouchersFound.length + ' vouchers, ' + n + ' RNG streams.'
+          + (ownedShowman ? ' Showman held.' : '') + (vouchersUnknown.length ? ' Unknown vouchers: ' + vouchersUnknown.join(', ') : '')
+          + '\nAnalysis starts at ante ' + ante + ' with the save\'s RNG state; earlier antes are not shown.';
+        performAnalysis();
+      } catch (e) {
+        console.error(e);
+        status.classList.add('error');
+        status.textContent = 'Could not import: ' + e.message;
+      }
+    }
+    document.getElementById('importSaveBtn').addEventListener('click', () => document.getElementById('importSaveFile').click());
+    document.getElementById('importSaveFile').addEventListener('change', (e) => { if (e.target.files[0]) importSave(e.target.files[0]); e.target.value = ''; });
 
     // ---- Owned Jokers / consumables ----
     // Balatro locks a Joker or consumable you hold out of every pool (G.GAME.used_jokers):
@@ -1025,6 +1257,18 @@
       var ghostDeck = (deck == "Ghost Deck");
       loadDeckState(seed, deck);
       loadOwnedState(seed, deck);
+      loadResumeState(seed, deck);
+      // Resume from an imported save: restore every stream, then run only from the saved
+      // ante. The boss pool is restored too: the game picks among eligible bosses with the
+      // fewest uses, which the engine models by locking the over-used ones.
+      var resume = (saveResume && saveResume.nodes && seed === saveResume.seed) ? saveResume : null;
+      var firstAnte = 1;
+      if (resume) {
+        Object.keys(resume.nodes).forEach(k => inst.setNode(k, resume.nodes[k]));
+        (resume.lockedBosses || []).forEach(b => inst.lock(b));
+        firstAnte = resume.ante;
+      }
+      var resumingAnte = (a) => resume && a == resume.ante;
       if (ownedShowman) { var sp = inst.params; sp.showman = true; inst.params = sp; sp.delete(); }
       var startCards = startingDeck(inst, deck);
       Object.keys(deckRounds).forEach(k => delete deckRounds[k]);
@@ -1036,6 +1280,18 @@
       });
       for (let a = 1; a <= ante; a++) {
         inst.initUnlocks(a, false);
+        if (a < firstAnte) {
+          // Antes before the save: apply their permanent state (vouchers, unlocks) but roll
+          // nothing; the save already holds every stream's position.
+          for (const name in voucherPurchases) {
+            if (voucherPurchases[name] != a - 1) continue;
+            inst.activateVoucher(name);
+            for (const [t1, t2] of pairs) { if (t1 == name && !selectedOptions[options.indexOf(t2)]) inst.lock(t2); }
+          }
+          ownedItems.forEach(o => { if (o.to !== null && o.to !== undefined && o.to == a - 1) inst.release(o.name); });
+          ownedItems.forEach(o => { if (o.from == a) inst.hold(o.name); });
+          continue;
+        }
 
         // Vouchers bought in the previous ante take effect now: they leave the
         // pool, unlock their tier-2 upgrade, and apply their shop effects.
@@ -1049,8 +1305,16 @@
         }
 
         output += "==ANTE " + a + "==\n"
-        output += "Boss: " + inst.nextBoss(a) + "\n";
-        output += "Voucher: " + inst.nextVoucher(a) + "\n";
+        if (resumingAnte(a)) {
+          // Boss, voucher and tags for the saved ante were rolled when it began; the save's
+          // blind_choices/blind_tags hold them, and their streams already sit past that roll.
+          output += "Boss: " + resume.boss + "\n";
+          output += "Voucher: " + resume.voucher + "\n";
+          output += "Resumed from save: " + resume.label + "\n";
+        } else {
+          output += "Boss: " + inst.nextBoss(a) + "\n";
+          output += "Voucher: " + inst.nextVoucher(a) + "\n";
+        }
         var ownedNow = Object.keys(voucherPurchases).filter(n => voucherPurchases[n] <= a);
         if (ownedNow.length > 0) output += "Owned Vouchers: " + ownedNow.join(", ") + "\n";
 
@@ -1062,7 +1326,8 @@
         if (heldNow.length > 0) output += "Owned Cards: " + heldNow.join(", ") + "\n";
         var tagList = [];
         var numTags = 2 + (extraTags[a] || 0);
-        for (let t = 0; t < numTags; t++) tagList.push(inst.nextTag(a));
+        if (resumingAnte(a)) { tagList = resume.tags.slice(); for (let t = 2; t < numTags; t++) tagList.push(inst.nextTag(a)); }
+        else for (let t = 0; t < numTags; t++) tagList.push(inst.nextTag(a));
         output += "Tags: " + tagList.join(", ") + "\n";
 
         // Sixth Sense: one Spectral per trigger, at most once per round (first hand a lone 6), so 3 per ante. Uses the
@@ -1095,7 +1360,8 @@
         var ownedDirty = false;
         if (heldNow.includes("Perkeo")) {
           var numShops = shopsInAnte(a) + 3 * (extraSixth[a] || 0);
-          for (let sh = 1; sh <= numShops; sh++) {
+          var firstShop = resumingAnte(a) ? resume.perkeoFirstShop : 1;
+          for (let sh = firstShop; sh <= numShops; sh++) {
             // Pool for shop sh = consumables in hand when that shop ends: everything from earlier
             // antes, cards of this ante with pos <= sh, and Perkeo copies from earlier shops of
             // this ante. Slot order = acquisition order: earlier antes first, then by position,
@@ -1142,7 +1408,12 @@
         //     the run, while the edition roll ("edisou" + ante) stays per ante.
         GENERATORS.forEach(g => {
           var cards = [];
-          if (g.source == "sou") inst.resetNode("Joker4");
+          if (g.source == "sou") {
+            // Legendary pool is run-wide. Normally rewound each ante to list the 1st, 2nd, ...
+            // Soul of the run; when resuming, rewind to the save's position instead.
+            if (resume) Object.keys(resume.nodes).forEach(k => { if (k == "Joker4" || k.startsWith("Joker4_resample")) inst.setNode(k, resume.nodes[k]); });
+            else inst.resetNode("Joker4");
+          }
           for (let i = 0; i < g.count; i++) {
             if (g.kind == "joker") {
               var jkr = inst.nextJoker(g.source, a, false);
@@ -1170,14 +1441,18 @@
         var numRounds = 3 + (extraRounds[a] || 0);
         var anteRounds = [];
         output += "Draw Order (hand " + handSize + "):\n";
-        for (let r = 1; r <= numRounds; r++) {
+        // Resumed ante: only the blinds still ahead shuffle (skipped blinds never did).
+        var roundList = [];
+        if (resumingAnte(a)) { roundList = resume.remainingRounds.slice(); for (let r = 4; r <= numRounds; r++) roundList.push(r); }
+        else for (let r = 1; r <= numRounds; r++) roundList.push(r);
+        for (const r of roundList) {
           var deckCards = deckAt(startCards, a, r);
           var perm = inst.nextShuffle(a, deckCards.length);
           var ordered = [];
           for (let i = 0; i < perm.size(); i++) ordered.push(deckCards[perm.get(i)]);
           perm.delete();
           if (!DRAW_FROM_END) ordered.reverse();
-          anteRounds.push({ hand: handSize, cards: ordered });
+          anteRounds.push({ round: r, hand: handSize, cards: ordered, blind: resumingAnte(a) && r <= 3 ? resume.remainingBlindNames[resume.remainingRounds.indexOf(r)] : null });
           output += "Round " + r + " [" + ordered.length + "]: " + ordered.map(c => c.name).join(", ") + "\n";
         }
         deckRounds[a] = anteRounds;
@@ -1189,7 +1464,14 @@
         var shopCards = (framesPerAnte[a-1] || 0) * shopSlots;
 
         output += "Shop Queue (" + shopSlots + " cards per frame): \n";
-        for (let q = 1; q <= shopCards; q++) {
+        var qStart = 1;
+        if (resumingAnte(a) && resume.currentShop) {
+          // Frame 1 is the shop on screen, from the save. Rerolls follow from the stream.
+          output += "Current Shop: " + resume.currentShop.cards.join(", ") + "\n";
+          qStart = resume.currentShop.cards.length + 1;
+          for (let q = 1; q < qStart; q++) output += q + ") " + resume.currentShop.cards[q - 1] + "\n";
+        }
+        for (let q = qStart; q <= shopCards; q++) {
           output += q + ") ";
           var item = inst.nextShopItem(a);
           if (item.type == "Joker") {
@@ -1208,6 +1490,12 @@
 
         output += "\nPacks: \n";
         var numPacks = ((a == 1) ? 4 : 6) + (extraPacks[a] || 0);
+        if (resumingAnte(a)) {
+          numPacks = Math.max(0, 2 * (shopsInAnte(a) - resume.shopsRolled)) + (extraPacks[a] || 0);
+          // Packs in the shop on screen: the save names them but not their contents, and their
+          // content streams are already advanced past them, so they are listed by name only.
+          if (resume.currentShop) resume.currentShop.packs.forEach(pk => { output += pk + " - (on screen now; open it in the game to see its contents)\n"; });
+        }
         for (let p = 1; p <= numPacks; p++) {
           var pack = inst.nextPack(a);
           output += pack + " - ";
@@ -1287,6 +1575,14 @@
       };
 
       inst.delete();
+
+      var statusEl = document.getElementById('importSaveStatus');
+      if (resume && !statusEl.textContent.startsWith('Imported')) {
+        statusEl.classList.remove('error');
+        statusEl.textContent = 'Resuming from ' + resume.label + '. ';
+        var forget = document.createElement('button'); forget.textContent = 'Forget save'; forget.className = 'smallButton';
+        forget.addEventListener('click', () => window.saveResume.forget()); statusEl.appendChild(forget);
+      } else if (!resume && statusEl.textContent.startsWith('Resuming')) statusEl.textContent = '';
 
       // Update output box with analysis result
       outputBox.value = output;

@@ -27,6 +27,8 @@ EMSCRIPTEN_BINDINGS(Immolate) {
         .function("randint", &Instance::randint)
         .function("randchoice", &Instance::randchoice)
         .function("resetNode", &Instance::resetNode)
+        .function("peekNode", &Instance::peekNode)
+        .function("setNode", &Instance::setNode)
         .property("params", &Instance::params)
         .property("seed", &Instance::seed)
 
