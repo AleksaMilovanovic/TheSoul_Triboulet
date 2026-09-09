@@ -1358,7 +1358,10 @@ function searchAndHighlight() {
                 + (boss ? '  |  Boss: ' + boss : '')
                 + (voucher ? '  |  Voucher: ' + voucher : '')
                 + (resumed ? '  |  \u23EF Resumed from save' : '');
-            createCollapsible(anteBox, title, anteLabel, (queueContainer) => {
+            // A Negative Joker anywhere in this ante's generation paths also highlights the
+            // ante's own collapsible title, so it's visible before expanding into it.
+            const anteHasNegative = generators.some(g => g.cards.some(c => parseCardItem(c).itemModifiers.includes('Negative')));
+            const anteBody = createCollapsible(anteBox, title, anteLabel, (queueContainer) => {
 
             const queueInfo = document.createElement('div');
             queueInfo.className = 'queueInfo';
@@ -2212,6 +2215,7 @@ function searchAndHighlight() {
             }
 
             }, 'anteTitle');
+            if (anteHasNegative) anteBody.previousSibling.classList.add('hasNegative');
 
             scrollingContainer.appendChild(anteBox);
         });
