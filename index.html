@@ -687,7 +687,7 @@
     // ante 21 whose 'perkeo' stream had advanced 274 times: far more than one per shop.
     // (Both models fit the earlier hand observations; the save count separates them.)
     const PERKEO_PULL_PER_TRIGGER = true;
-    var deckOps = [];        // { type:'add', id, name, ante, round, seq } | { type:'remove', target, ante, round, seq }
+    var deckOps = [];        // { type:'add', id, name, ante, round, seq } | { type:'remove', target, ante, round, seq } | { type:'modify', target, name, was, ante, round, seq }
     var deckRounds = {};     // ante -> [{ hand, cards: [{ id, name }] }], rebuilt by performAnalysis
     var extraRounds = {};    // ante -> extra rounds revealed (replaying an ante after Hieroglyph/Petroglyph)
     var deckHandAdjust = 0;  // manual hand-size tweak (Juggler, Stuntman, Turtle Bean, ...)
@@ -721,15 +721,22 @@
     }
 
     // Deck contents when round r of ante a is shuffled: starting cards plus added cards
-    // (in acquisition order, which is what sort_id follows), minus removed ones.
+    // (in acquisition order, which is what sort_id follows), minus removed ones, with any
+    // modify ops applied in place. Sealing or enhancing a card does not re-create it, so it
+    // keeps its sort_id and its place in this list; only adds and removes move things.
     function deckAt(startCards, a, r) {
       const eff = (op) => op.ante < a || (op.ante == a && op.round <= r);
       var cards = startCards.map((code, i) => ({ id: 's' + i, name: cardCodeToName(code) }));
       deckOps.filter(op => op.type == 'add' && eff(op))
         .sort((x, y) => (x.ante - y.ante) || (x.round - y.round) || (x.seq - y.seq))
         .forEach(op => cards.push({ id: op.id, name: op.name }));
+      var modified = {};
+      deckOps.filter(op => op.type == 'modify' && eff(op))
+        .sort((x, y) => (x.ante - y.ante) || (x.round - y.round) || (x.seq - y.seq))
+        .forEach(op => { modified[op.target] = op.name; });
       var removed = new Set(deckOps.filter(op => op.type == 'remove' && eff(op)).map(op => op.target));
-      return cards.filter(c => !removed.has(c.id));
+      return cards.filter(c => !removed.has(c.id))
+        .map(c => modified[c.id] !== undefined ? { id: c.id, name: modified[c.id] } : c);
     }
 
     function saveDeckState() {
@@ -773,18 +780,58 @@
         deckOps.push({ type: 'remove', target: id, name: name, ante: ante, round: round, seq: deckSeq });
         deckChanged();
       },
+      // Card gains a seal / edition / enhancement from round `round` of ante `ante`. The card
+      // itself is untouched, so it keeps its position in the deck order; only its name changes.
+      modify: function(id, was, name, ante, round) {
+        if (name == was) return;
+        deckSeq++;
+        deckOps.push({ type: 'modify', target: id, name: name, was: was, ante: ante, round: round, seq: deckSeq });
+        deckChanged();
+      },
       undo: function(seq) {
         var idx = deckOps.findIndex(op => op.seq == seq);
         if (idx < 0) return;
         var op = deckOps[idx];
         deckOps.splice(idx, 1);
-        // Dropping an added card also drops any removal recorded against it.
-        if (op.type == 'add') for (let i = deckOps.length - 1; i >= 0; i--) if (deckOps[i].type == 'remove' && deckOps[i].target == op.id) deckOps.splice(i, 1);
+        // Dropping an added card also drops any removal or edit recorded against it.
+        if (op.type == 'add') for (let i = deckOps.length - 1; i >= 0; i--) if ((deckOps[i].type == 'remove' || deckOps[i].type == 'modify') && deckOps[i].target == op.id) deckOps.splice(i, 1);
         deckChanged();
       },
       clear: function() { deckOps.length = 0; deckHandAdjust = 0; Object.keys(extraRounds).forEach(k => delete extraRounds[k]); deckChanged(); },
       moreRounds: function(ante) { extraRounds[ante] = (extraRounds[ante] || 0) + 1; deckChanged(); },
       resetRounds: function(ante) { delete extraRounds[ante]; deckChanged(); }
+    };
+
+    // ---- Effects that pick one of your Jokers at random ----
+    // Hex, Ectoplasm, Ankh, Invisible Joker and The Wheel of Fortune each roll their own
+    // run-wide stream and touch no other, so pull N of that stream depends on the seed
+    // alone: a bare Instance reproduces it without replaying the run. Stream keys are the
+    // game's own; "ectoplasm" is confirmed against a real save's GAME.pseudorandom (the
+    // save's "wheel" key is the boss blind The Wheel, not the Tarot). An imported save
+    // restores the pulls its run has already spent, so counting continues from there.
+    function effectInstance() {
+      var seed = seedInput.value.toUpperCase().replace(/0/g, 'O');
+      var inst = new Immolate.Instance(seed);
+      var resume = (saveResume && saveResume.nodes && seed === saveResume.seed) ? saveResume : null;
+      if (resume) Object.keys(resume.nodes).forEach(k => inst.setNode(k, resume.nodes[k]));
+      return inst;
+    }
+    window.jokerEffects = {
+      // Replay `steps` uses of an effect against one instance and collect what each returned.
+      // `step(pull, i)` is the effect's own logic: pull(key) is a 0..1 roll and
+      // pull(key, max) a 0..max index, each advancing that stream once. Running it for real
+      // (rather than asking for a fixed list of pulls) is what lets an effect skip a pull
+      // it would not make - The Wheel of Fortune rolls its target on the same key as its
+      // odds check, and only when that check passes.
+      run: function(steps, step) {
+        var inst = effectInstance();
+        var out = [];
+        try {
+          var pull = function(key, max) { return max === undefined ? inst.random(key) : inst.randint(key, 0, max); };
+          for (var i = 0; i < steps; i++) out.push(step(pull, i));
+        } finally { inst.delete(); }
+        return out;
+      }
     };
 
     // ---- Save import (Balatro save.jkr) ----
@@ -1070,6 +1117,15 @@
       setPos: function(id, pos) {
         var it = ownedItems.find(o => o.id == id);
         if (it) { it.pos = pos; ownedChanged(); }
+      },
+      // Edition on a held Joker. It changes no pool (the game excludes a held Joker by name
+      // whatever its edition), but Hex / Ectoplasm / The Wheel of Fortune only consider
+      // Jokers with no edition, so the effect planner needs to know.
+      setEdition: function(id, edition) {
+        var it = ownedItems.find(o => o.id == id);
+        if (!it) return;
+        if (edition) it.edition = edition; else delete it.edition;
+        ownedChanged();
       },
       shopsInAnte: shopsInAnte,
       posForRound: posForRound,

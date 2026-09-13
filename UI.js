@@ -508,6 +508,36 @@ function searchAndHighlight() {
         gap: 3px;
         margin-top: 4px;
     }
+    /* Action menu on a draw-order card. The strip clips overflow, so the tile widens to
+       hold the menu instead of floating it over its neighbours. */
+    .deckCardMenu {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        margin-top: 4px;
+        text-align: left;
+    }
+    .deckCard.menuOpen {
+        width: 170px;
+        background-color: #3a3a3a;
+        outline: 1px solid #777777;
+    }
+    .deckCardEdit {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        margin-top: 3px;
+        padding-top: 4px;
+        border-top: 1px solid #555555;
+    }
+    .deckCardEdit select {
+        font-size: 11px;
+        width: 100%;
+    }
+    .deckCardPreview {
+        color: #ffd67f;
+        white-space: normal;
+    }
 
     .collapsibleTitle::before {
         content: "▾";
@@ -589,6 +619,113 @@ function searchAndHighlight() {
         flex-wrap: wrap;
         margin-bottom: 6px;
         font-size: 11px;
+    }
+
+    /* Reroll planner, shown above the shop strip while the seen run is collapsed */
+    .rerollPlan {
+        margin: 2px 0 8px;
+        padding: 6px 10px;
+        border: 1px solid #d5a021;
+        border-left-width: 3px;
+        border-radius: 4px;
+        background-color: rgba(213, 160, 33, 0.1);
+        font-size: 12px;
+        max-width: 760px;
+    }
+    .rerollPlanHead {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px;
+        font-weight: bold;
+        color: #ffd67f;
+        margin-bottom: 4px;
+    }
+    .rerollShopsLabel {
+        font-weight: normal;
+        font-size: 11px;
+        color: #cccccc;
+        cursor: pointer;
+    }
+    .rerollShopsInput {
+        width: 50px;
+        margin-left: 4px;
+        font-size: 11px;
+    }
+    .rerollPlanBody > div {
+        margin: 2px 0;
+        color: #cccccc;
+    }
+    .rerollPlanTotal {
+        margin-top: 4px !important;
+        font-weight: bold;
+        font-size: 13px;
+        color: #96ed79 !important;
+    }
+
+    /* Random-Joker-effect planner inside the Owned Cards panel */
+    .effectPanel {
+        margin-top: 10px;
+        padding-top: 8px;
+        border-top: 1px solid #555555;
+    }
+    .effectPoolTitle {
+        font-size: 12px;
+        font-weight: bold;
+        color: #ffd67f;
+        margin: 6px 0 4px;
+    }
+    .effectPoolTile {
+        display: inline-block;
+        text-align: center;
+        width: 82px;
+        margin-right: 8px;
+        padding: 4px;
+        font-size: 10px;
+        white-space: normal;
+        border-radius: 3px;
+        outline: 1px solid #4b7a4b;
+        flex-shrink: 0;
+    }
+    .effectPoolTile.outOfPool {
+        outline-color: #666666;
+        filter: grayscale(0.7);
+        opacity: 0.55;
+    }
+    .effectEdSel {
+        font-size: 10px;
+        width: 100%;
+        margin-top: 3px;
+    }
+    .effectPoolTile .ownedActions {
+        justify-content: center;
+        gap: 3px;
+    }
+    .effectResults {
+        margin: 8px 0 4px;
+        font-size: 12px;
+        color: #cccccc;
+    }
+    .effectResultRow {
+        margin: 2px 0;
+    }
+    .effectResultRow.effectNext {
+        color: #96ed79;
+        font-weight: bold;
+    }
+    .effectUseNum {
+        display: inline-block;
+        min-width: 72px;
+        color: #aaaaaa;
+        font-weight: normal;
+    }
+    .effectMiss {
+        color: #999999;
+    }
+    .effectPoolNote {
+        font-size: 11px;
+        max-width: 700px;
+        margin-bottom: 5px;
     }
 
     .packControls {
@@ -1236,6 +1373,383 @@ function searchAndHighlight() {
         return tile;
     }
 
+    // Consumables and Jokers that pick one of your Jokers at random, modelled against the
+    // game's own card.lua / misc_functions.lua.
+    //
+    // Ordering. pseudorandom_element(_t, seed) sorts the pool before indexing into it, and
+    // when its elements are tables carrying a sort_id - which every Card is - it sorts by
+    // THAT, not by the table key:
+    //     if keys[1] and keys[1].v and type(keys[1].v) == 'table' and keys[1].v.sort_id then
+    //       table.sort(keys, function (a, b) return a.v.sort_id < b.v.sort_id end)
+    // sort_id is a global counter stamped at Card creation, so the pool is in the order the
+    // Jokers were created: the order you acquired them. Dragging Jokers along the row
+    // reorders G.jokers.cards but not the sorted pool, so it cannot steer these effects.
+    //
+    // Eligibility. The Wheel of Fortune's eligible_strength_jokers and Ectoplasm/Hex's
+    // eligible_editionless_jokers are built by the same filter, `set == 'Joker' and not
+    // v.edition`: editionless, eternal included. Ankh and Invisible Joker pick from every
+    // Joker (Invisible excludes only itself).
+    //
+    // Pulls per use. Each effect rolls one run-wide stream. The Wheel of Fortune is the only
+    // one that rolls more than once, and all three rolls are on the same key: the odds check
+    // gates the rest, so a failed use spends one pull and a passing use spends three
+    // (odds, target, edition). poll_edition('wheel_of_fortune', nil, true, true) turns that
+    // third roll into Polychrome above 0.85, Holographic above 0.5, else Foil - the 15/35/50
+    // split, negative excluded by _no_neg.
+    const JOKER_EFFECTS = [
+        { id: 'hex', label: 'Hex (Spectral)', pool: 'editionless', grants: 'Polychrome',
+          destroysOthers: true,
+          roll: (pull, n) => ({ hit: true, idx: pull('hex', n - 1) }),
+          note: 'Adds Polychrome to one editionless Joker, then destroys every other Joker. Eternal Jokers survive.' },
+        { id: 'ectoplasm', label: 'Ectoplasm (Spectral)', pool: 'editionless', grants: 'Negative',
+          roll: (pull, n) => ({ hit: true, idx: pull('ectoplasm', n - 1) }),
+          note: 'Adds Negative to one editionless Joker. Hand size drops by 1 for the first Ectoplasm of the run, 2 for the next, and so on.' },
+        { id: 'wheel', label: 'The Wheel of Fortune (Tarot)', pool: 'editionless', odds: true,
+          roll: (pull, n, ctx) => {
+              const threshold = Math.pow(2, ctx.oops) / 4;
+              const roll = pull('wheel_of_fortune');
+              if (roll >= threshold) return { hit: false, roll, threshold };
+              const idx = pull('wheel_of_fortune', n - 1);
+              const ed = pull('wheel_of_fortune');
+              return { hit: true, roll, threshold, idx,
+                       grants: ed > 0.85 ? 'Polychrome' : ed > 0.5 ? 'Holographic' : 'Foil' };
+          },
+          note: '1 in 4 to add an edition to one editionless Joker: Foil 50%, Holographic 35%, Polychrome 15%.' },
+        { id: 'ankh', label: 'Ankh (Spectral)', pool: 'all', copies: true, destroysOthers: true,
+          roll: (pull, n) => ({ hit: true, idx: pull('ankh_choice', n - 1) }),
+          note: 'Copies one Joker - any Joker, edition or not - then destroys the others. Eternal Jokers survive, and the copy is Negative only if the original was.' },
+        { id: 'invisible', label: 'Invisible Joker (sold)', pool: 'others', copies: true,
+          excludeName: 'Invisible Joker',
+          roll: (pull, n) => ({ hit: true, idx: pull('invisible', n - 1) }),
+          note: 'Sold after 2 rounds held: duplicates one of your OTHER Jokers, keeping Negative if the original had it.' },
+    ];
+    const EFFECT_EDITIONS = ['Foil', 'Holographic', 'Polychrome', 'Negative'];
+
+    // The Jokers a random effect can land on, in acquisition order. pseudorandom_element
+    // sorts the pool before indexing into it, so the order is the Jokers' own sort_id -
+    // the order they were created, i.e. the order you picked them up. Dragging Jokers
+    // around the row does NOT change it, and cannot be used to steer these effects; the
+    // only lever is which Jokers are eligible at all. Same ordering the Perkeo pool uses:
+    // earlier antes first, then by position in the ante, then by record order.
+    function jokerPool(os, anteNum) {
+        const slotKey = o => o.perkeo ? ((o.shop || 0) + 0.5) : (o.pos || 1);
+        return os.items
+            .filter(o => os.heldAt(o, anteNum) && determineItemType(o.name) === 'joker')
+            .slice()
+            .sort((x, y) => (x.from - y.from) || (slotKey(x) - slotKey(y))
+                || (parseInt(x.id.slice(1), 10) - parseInt(y.id.slice(1), 10)));
+    }
+    function jokerEdition(o) { return o.edition || (o.perkeo || o.negative ? 'Negative' : ''); }
+
+    // Panel under Owned Cards: pick an effect, see the Joker each of your next uses lands
+    // on, and record the result on your owned cards.
+    function renderEffectPlanner(body, os, anteNum) {
+        const board = jokerPool(os, anteNum);
+
+        const controls = document.createElement('div');
+        controls.className = 'deckControls';
+        const effSel = document.createElement('select');
+        JOKER_EFFECTS.forEach(e => { const o = document.createElement('option'); o.value = e.id; o.textContent = e.label; effSel.appendChild(o); });
+        remember(effSel, 'effect:which');
+        const usedLabel = document.createElement('label');
+        usedLabel.textContent = 'Already used this run:';
+        usedLabel.title = 'Uses of this effect earlier in the run. Each one spent a pull of its stream, so the next use is not the first.';
+        const usedInput = document.createElement('input');
+        usedInput.type = 'number'; usedInput.min = 0; usedInput.max = 99; usedInput.value = 0;
+        usedInput.className = 'deckHandInput';
+        usedLabel.appendChild(usedInput);
+        // Counted per effect, and remembered across the re-render every analysis triggers.
+        const usedKey = () => 'effect:used:' + effSel.value;
+        const loadUsed = () => { usedInput.value = formMemory[usedKey()] !== undefined ? formMemory[usedKey()] : 0; };
+        const saveUsed = () => { formMemory[usedKey()] = usedInput.value; };
+        const aheadLabel = document.createElement('label');
+        aheadLabel.textContent = 'Uses to show:';
+        const aheadInput = document.createElement('input');
+        aheadInput.type = 'number'; aheadInput.min = 1; aheadInput.max = 20; aheadInput.value = 5;
+        aheadInput.className = 'deckHandInput';
+        remember(aheadInput, 'effect:ahead');
+        aheadLabel.appendChild(aheadInput);
+        // Oops! All 6s doubles every listed probability per copy, so it moves the Wheel's
+        // 1 in 4 gate and changes which uses spend a target pull at all.
+        const oopsLabel = document.createElement('label');
+        oopsLabel.textContent = 'Oops! All 6s held:';
+        oopsLabel.title = 'Each copy doubles listed probabilities, so the Wheel goes 1 in 4, then 1 in 2, then certain.';
+        const oopsInput = document.createElement('input');
+        oopsInput.type = 'number'; oopsInput.min = 0; oopsInput.max = 4; oopsInput.value = 0;
+        oopsInput.className = 'deckHandInput';
+        remember(oopsInput, 'effect:oops');
+        oopsLabel.appendChild(oopsInput);
+        controls.appendChild(effSel);
+        controls.appendChild(usedLabel);
+        controls.appendChild(aheadLabel);
+        controls.appendChild(oopsLabel);
+        body.appendChild(controls);
+
+        const note = document.createElement('div');
+        note.className = 'modifier deckNote';
+        body.appendChild(note);
+
+        const poolWrap = document.createElement('div');
+        body.appendChild(poolWrap);
+        const results = document.createElement('div');
+        body.appendChild(results);
+
+        const render = () => {
+            const eff = JOKER_EFFECTS.find(e => e.id === effSel.value) || JOKER_EFFECTS[0];
+            note.textContent = eff.note;
+            poolWrap.innerHTML = '';
+            results.innerHTML = '';
+
+            // Who is eligible. Board order is what the game indexes, so it is shown as a
+            // numbered row you can reorder to match your actual Joker row.
+            const eligible = board.filter(o => {
+                if (eff.excludeName && o.name === eff.excludeName) return false;
+                if (eff.pool === 'editionless' && jokerEdition(o)) return false;
+                return true;
+            });
+
+            const poolTitle = document.createElement('div');
+            poolTitle.className = 'effectPoolTitle';
+            poolTitle.textContent = 'Pool in acquisition order (' + eligible.length + ' eligible of ' + board.length + ' Jokers)';
+            poolWrap.appendChild(poolTitle);
+            const poolNote = document.createElement('div');
+            poolNote.className = 'modifier effectPoolNote';
+            poolNote.textContent = 'The pick is a slot number in this list. pseudorandom_element sorts the pool by '
+                + 'sort_id, the counter stamped on a card when it is created, so the order is the order you acquired '
+                + 'these Jokers \u2014 not where they sit in your row. Dragging Jokers around in game cannot steer '
+                + 'these effects; the only lever is who is eligible, so sell a Joker or give one an edition.';
+            poolWrap.appendChild(poolNote);
+
+            const row = document.createElement('div');
+            row.className = 'scrollable no-select';
+            board.forEach((o) => {
+                const inPool = eligible.indexOf(o) >= 0;
+                const tile = document.createElement('div');
+                tile.className = 'effectPoolTile' + (inPool ? '' : ' outOfPool');
+                tile.appendChild(makeCardSprite(o.name, 'joker', [], []));
+                const nm = document.createElement('div');
+                nm.className = 'voucherName';
+                nm.textContent = o.name;
+                tile.appendChild(nm);
+                const pos = document.createElement('div');
+                pos.className = 'modifier';
+                pos.textContent = inPool ? 'Pool #' + (eligible.indexOf(o) + 1) : 'Not eligible';
+                tile.appendChild(pos);
+
+                const edSel = document.createElement('select');
+                edSel.className = 'effectEdSel';
+                edSel.title = 'Edition on this Joker. Hex, Ectoplasm and the Wheel only hit Jokers with no edition.';
+                [''].concat(EFFECT_EDITIONS).forEach(v => {
+                    const opt = document.createElement('option');
+                    opt.value = v; opt.textContent = v === '' ? 'No edition' : v;
+                    edSel.appendChild(opt);
+                });
+                edSel.value = jokerEdition(o);
+                edSel.addEventListener('change', () => os.setEdition(o.id, edSel.value));
+                tile.appendChild(edSel);
+
+                row.appendChild(tile);
+            });
+            if (board.length === 0) {
+                const none = document.createElement('div');
+                none.className = 'modifier';
+                none.textContent = 'No Jokers held this ante.';
+                row.appendChild(none);
+            }
+            poolWrap.appendChild(row);
+            attachDragScroll(row);
+
+            if (eligible.length === 0) {
+                const none = document.createElement('div');
+                none.className = 'modifier';
+                none.textContent = board.length === 0
+                    ? 'Mark the Jokers you hold to see what this effect would hit.'
+                    : 'Nothing is eligible, so the game will not let you use this.';
+                results.appendChild(none);
+                return;
+            }
+
+            // Replayed in order rather than indexed into: how many pulls a use spends can
+            // depend on the use itself (a Wheel that fails its odds check never rolls a
+            // target or an edition), so use N's place in the stream follows from uses 1..N-1.
+            const used = Math.max(0, parseInt(usedInput.value, 10) || 0);
+            const ahead = Math.max(1, Math.min(20, parseInt(aheadInput.value, 10) || 1));
+            const ctx = { oops: Math.max(0, Math.min(4, parseInt(oopsInput.value, 10) || 0)) };
+            const rolls = window.jokerEffects.run(used + ahead, (pull) => eff.roll(pull, eligible.length, ctx));
+
+            const list = document.createElement('div');
+            list.className = 'effectResults';
+            for (let i = used; i < used + ahead; i++) {
+                const r = rolls[i];
+                const line = document.createElement('div');
+                line.className = 'effectResultRow' + (i === used ? ' effectNext' : '');
+                const when = document.createElement('span');
+                when.className = 'effectUseNum';
+                when.textContent = (i === used ? 'Next use' : 'Use #' + (i + 1)) + ':';
+                line.appendChild(when);
+                const what = document.createElement('span');
+                if (!r.hit) {
+                    what.textContent = 'odds fail (' + r.roll.toFixed(3) + ' ≥ ' + r.threshold + ') — nothing happens';
+                    what.className = 'effectMiss';
+                } else {
+                    // The slot number is the part the seed decides; which Joker sits in that
+                    // slot follows from sort_id order, so both are shown.
+                    what.textContent = (eff.copies ? 'copies ' : (r.grants || eff.grants) + ' on ')
+                        + 'slot ' + (r.idx + 1) + ' of ' + eligible.length + ' \u2014 ' + eligible[r.idx].name
+                        + (eff.odds ? '  (odds pass, ' + r.roll.toFixed(3) + ' < ' + r.threshold + ')' : '');
+                }
+                line.appendChild(what);
+                list.appendChild(line);
+            }
+            results.appendChild(list);
+
+            // Apply the next use to the owned cards, so every later queue rerolls around it.
+            const next = rolls[used];
+            const hit = next.hit;
+            const target = hit ? eligible[next.idx] : null;
+            const grants = next.grants || eff.grants;
+            const applyRow = document.createElement('div');
+            applyRow.className = 'deckControls';
+            const apply = document.createElement('button');
+            apply.className = 'smallButton';
+            apply.textContent = hit ? 'Apply to ' + target.name : 'Nothing to apply';
+            apply.disabled = !hit;
+            apply.title = 'Record the result on your owned cards for this ante';
+            apply.addEventListener('click', () => {
+                const others = board.filter(o => o.id !== target.id);
+                let msg = eff.copies
+                    ? 'Add a copy of ' + target.name + ' from this ante'
+                    : 'Mark ' + target.name + ' as ' + grants;
+                // Eternal Jokers survive a Hex or an Ankh, and this tool does not track the
+                // sticker, so the confirm names the count and leaves the call to you.
+                if (eff.destroysOthers && others.length > 0) {
+                    msg += ', and lose ' + others.length + ' other Joker' + (others.length === 1 ? '' : 's')
+                        + ' this ante (keep any Eternal ones: say no and release them by hand)';
+                }
+                if (!confirm(msg + '?')) return;
+                if (eff.copies) os.add(target.name, anteNum, target.pos || 1);
+                else os.setEdition(target.id, grants);
+                if (eff.destroysOthers) others.forEach(o => os.release(o.id, anteNum));
+                if (eff.id === 'invisible') {
+                    const inv = board.find(o => o.name === 'Invisible Joker');
+                    if (inv) os.release(inv.id, anteNum);
+                }
+                usedInput.value = String(used + 1);
+                saveUsed();
+            });
+            applyRow.appendChild(apply);
+            const bump = document.createElement('button');
+            bump.className = 'smallButton';
+            bump.textContent = 'Used it (skip a pull)';
+            bump.title = 'Count this use without changing your owned cards';
+            bump.addEventListener('click', () => { usedInput.value = String(used + 1); saveUsed(); render(); });
+            applyRow.appendChild(bump);
+            results.appendChild(applyRow);
+        };
+
+        effSel.addEventListener('change', () => { loadUsed(); render(); });
+        usedInput.addEventListener('input', () => { saveUsed(); render(); });
+        aheadInput.addEventListener('input', render);
+        oopsInput.addEventListener('input', render);
+        loadUsed();
+        render();
+    }
+
+    // Clicking a card in a round's draw order asks what happens to it during that round,
+    // rather than assuming it was destroyed. Shift+click keeps the old one-click shortcut.
+    // Remove and Duplicate both take effect from the next shuffle (nextA / nextR), as does
+    // Modify — a tarot sealing or enhancing a card edits it in place, so it keeps its
+    // position in the deck order, while a duplicate is a new card at the end of it.
+    function attachDeckCardMenu(tile, card, roundNum, nextA, nextR) {
+        const ds = window.deckState;
+        if (!ds) return;
+        tile.classList.add('clickable');
+        tile.title = 'Click for what happens to this card during round ' + roundNum
+            + ' (shift+click removes it straight away)';
+
+        const closeMenu = () => {
+            const open = tile.querySelector('.deckCardMenu');
+            if (open) open.remove();
+            tile.classList.remove('menuOpen');
+        };
+
+        tile.addEventListener('click', (e) => {
+            if (e.target.closest('.deckCardMenu')) return;
+            if (e.shiftKey) { ds.remove(card.id, card.name, nextA, nextR); return; }
+            if (tile.querySelector('.deckCardMenu')) { closeMenu(); return; }
+            // One menu at a time, so the draw-order strip doesn't fill up with panels.
+            document.querySelectorAll('.deckCard.menuOpen').forEach(t => {
+                const m = t.querySelector('.deckCardMenu');
+                if (m) m.remove();
+                t.classList.remove('menuOpen');
+            });
+
+            const menu = document.createElement('div');
+            menu.className = 'deckCardMenu';
+            tile.classList.add('menuOpen');
+
+            const mkBtn = (parent, label, hint, fn) => {
+                const b = document.createElement('button');
+                b.className = 'smallButton';
+                b.textContent = label;
+                if (hint) b.title = hint;
+                b.addEventListener('click', (ev) => { ev.stopPropagation(); fn(); });
+                parent.appendChild(b);
+                return b;
+            };
+
+            mkBtn(menu, 'Remove', 'Destroyed, sold, or removed during round ' + roundNum,
+                () => ds.remove(card.id, card.name, nextA, nextR));
+            mkBtn(menu, 'Duplicate', 'A copy is created during round ' + roundNum + ' (Death, DNA, Hanging Chad...). New cards join the end of the deck order.',
+                () => ds.add(card.name, nextA, nextR));
+
+            // Modify only makes sense for a card the name parser understands.
+            const parsed = parseStandardCardName(card.name);
+            if (!parsed) { tile.appendChild(menu); return; }
+
+            const form = document.createElement('div');
+            form.className = 'deckCardEdit';
+            form.hidden = true;
+            mkBtn(menu, 'Modify...', 'Give it a seal, edition, or enhancement. The card keeps its place in the deck order.',
+                () => { form.hidden = !form.hidden; });
+
+            const mkSelect = (values, current, labelFn) => {
+                const sel = document.createElement('select');
+                values.forEach(v => {
+                    const o = document.createElement('option');
+                    o.value = v;
+                    o.textContent = labelFn(v);
+                    sel.appendChild(o);
+                });
+                sel.value = current || '';
+                return sel;
+            };
+            const has = list => list.find(v => v && parsed.modifiers.includes(v)) || '';
+            const sealSel = mkSelect(CARD_SEALS, parsed.seal || '', v => v === '' ? 'No seal' : v);
+            const edSel = mkSelect(CARD_EDITIONS, has(CARD_EDITIONS), v => v === '' ? 'No edition' : v);
+            const enhSel = mkSelect(CARD_ENHANCEMENTS, has(CARD_ENHANCEMENTS), v => v === '' ? 'No enhancement' : v);
+            [sealSel, edSel, enhSel].forEach(el => form.appendChild(el));
+
+            // Same token order as the Add card control, so both produce comparable names.
+            const editedName = () => (sealSel.value ? sealSel.value + ' ' : '')
+                + (edSel.value ? edSel.value + ' ' : '')
+                + (enhSel.value ? enhSel.value + ' ' : '')
+                + parsed.rank + ' of ' + parsed.suit;
+
+            const preview = document.createElement('div');
+            preview.className = 'modifier deckCardPreview';
+            const syncPreview = () => { preview.textContent = editedName(); };
+            [sealSel, edSel, enhSel].forEach(el => el.addEventListener('change', syncPreview));
+            syncPreview();
+            form.appendChild(preview);
+
+            mkBtn(form, 'Apply from round ' + nextR, 'Record the change; it shows from the next shuffle on.',
+                () => ds.modify(card.id, card.name, editedName(), nextA, nextR));
+            menu.appendChild(form);
+            tile.appendChild(menu);
+        });
+    }
+
     // Mini chooser under a Standard Pack card: add it to the tracked deck from a chosen round.
     function attachDeckAddChooser(container, cardName, anteNum) {
         const ds = window.deckState;
@@ -1357,6 +1871,7 @@ function searchAndHighlight() {
             const anteLabel = title.replace(/=/g, '').trim()
                 + (boss ? '  |  Boss: ' + boss : '')
                 + (voucher ? '  |  Voucher: ' + voucher : '')
+                + (tags.length > 0 ? '  |  Tags: ' + tags.join(', ') : '')
                 + (resumed ? '  |  \u23EF Resumed from save' : '');
             // A Negative Joker anywhere in this ante's generation paths also highlights the
             // ante's own collapsible title, so it's visible before expanding into it.
@@ -1847,6 +2362,16 @@ function searchAndHighlight() {
                         grid.appendChild(tile);
                     });
                     body.appendChild(grid);
+
+                    // Effects that hit one of your Jokers at random, and what they would hit.
+                    const fx = document.createElement('div');
+                    fx.className = 'effectPanel';
+                    const fxTitle = document.createElement('div');
+                    fxTitle.className = 'voucherSectionTitle';
+                    fxTitle.textContent = 'Random Joker effects';
+                    fx.appendChild(fxTitle);
+                    renderEffectPlanner(fx, os, anteNum);
+                    body.appendChild(fx);
                 }, 'generatorGroupTitle');
             }
 
@@ -1942,7 +2467,10 @@ function searchAndHighlight() {
                         }
                         anteOps.forEach(op => {
                             const row = document.createElement('div');
-                            row.textContent = (op.type === 'add' ? 'Added ' : 'Removed ') + op.name + ' from round ' + op.round + ' ';
+                            const what = op.type === 'add' ? 'Added ' + op.name
+                                : op.type === 'modify' ? 'Changed ' + op.was + ' to ' + op.name
+                                : 'Removed ' + op.name;
+                            row.textContent = what + ' from round ' + op.round + ' ';
                             const undo = document.createElement('button');
                             undo.className = 'smallButton';
                             undo.textContent = 'Undo';
@@ -1964,9 +2492,7 @@ function searchAndHighlight() {
                             const nextR = ri < anteRounds.length - 1 ? (anteRounds[ri + 1].round || (ri + 2)) : 1;
                             rd.cards.forEach((card, idx) => {
                                 const tile = makeDeckCardTile(card, idx + 1, idx < rd.hand);
-                                tile.classList.add('clickable');
-                                tile.title = 'Click if this card is destroyed or removed during round ' + r;
-                                tile.addEventListener('click', () => ds.remove(card.id, card.name, nextA, nextR));
+                                attachDeckCardMenu(tile, card, r, nextA, nextR);
                                 scroll.appendChild(tile);
                             });
                             rb.appendChild(scroll);
@@ -1997,6 +2523,80 @@ function searchAndHighlight() {
                 controls.appendChild(hint);
                 body.appendChild(controls);
 
+                // Reroll planner, shown while the seen run is collapsed: how deep the first
+                // unseen card sits and what it costs to reroll down to it this ante.
+                const plan = document.createElement('div');
+                plan.className = 'rerollPlan';
+                plan.hidden = true;
+                const planHead = document.createElement('div');
+                planHead.className = 'rerollPlanHead';
+                const planTitle = document.createElement('span');
+                planTitle.textContent = 'Reroll plan to the first unseen card';
+                planHead.appendChild(planTitle);
+                const shopsLabel = document.createElement('label');
+                shopsLabel.className = 'rerollShopsLabel';
+                shopsLabel.textContent = 'Shops left this ante:';
+                shopsLabel.title = 'Each shop shows one frame for free; every frame after that costs a reroll.';
+                const shopsInput = document.createElement('input');
+                shopsInput.type = 'number';
+                shopsInput.min = 1;
+                shopsInput.max = 30;
+                shopsInput.value = 3;
+                shopsInput.className = 'rerollShopsInput';
+                remember(shopsInput, 'rerollShops:' + anteNum);
+                shopsLabel.appendChild(shopsInput);
+                planHead.appendChild(shopsLabel);
+                const planBody = document.createElement('div');
+                planBody.className = 'rerollPlanBody';
+                plan.appendChild(planHead);
+                plan.appendChild(planBody);
+                body.appendChild(plan);
+
+                // Reroll n of a shop costs $5 + (n-1), less $2 per reroll voucher, floored at $1.
+                const rerollVouchers = (isOwnedAt('Reroll Surplus') ? 1 : 0) + (isOwnedAt('Reroll Glut') ? 1 : 0);
+                const rerollPrice = (n) => Math.max(1, 5 + n - 2 * rerollVouchers);
+                const shopCost = (k) => { let c = 0; for (let i = 0; i < k; i++) c += rerollPrice(i); return c; };
+
+                const renderPlan = (seenCount) => {
+                    const shops = Math.max(1, Math.min(30, parseInt(shopsInput.value, 10) || 1));
+                    const wholeFrames = Math.floor(seenCount / shopSlots);
+                    const spare = seenCount % shopSlots;
+                    // The first unseen card sits in the next frame along, 1-based.
+                    const framesNeeded = wholeFrames + 1;
+                    const rerolls = Math.max(0, framesNeeded - shops);
+                    // Rerolls get dearer within a shop, so spreading them evenly is the cheapest split.
+                    const base = Math.floor(rerolls / shops), extra = rerolls % shops;
+                    const perShop = [];
+                    for (let i = 0; i < shops; i++) perShop.push(base + (i < extra ? 1 : 0));
+                    const total = perShop.reduce((sum, k) => sum + shopCost(k), 0);
+
+                    planBody.innerHTML = '';
+                    const line = (text, cls) => {
+                        const d = document.createElement('div');
+                        if (cls) d.className = cls;
+                        d.textContent = text;
+                        planBody.appendChild(d);
+                        return d;
+                    };
+                    line(seenCount + ' card' + (seenCount === 1 ? '' : 's') + ' collapsed = ' + wholeFrames + ' full frame' + (wholeFrames === 1 ? '' : 's')
+                        + (spare > 0 ? ' + ' + spare + ' card' + (spare === 1 ? '' : 's') : '')
+                        + ' at ' + shopSlots + ' cards per frame.');
+                    line('The first unseen card is in frame ' + framesNeeded + '.');
+                    if (rerolls === 0) {
+                        line(shops + ' shop' + (shops === 1 ? '' : 's') + ' show ' + shops + ' frame'
+                            + (shops === 1 ? '' : 's') + ' for free, so no rerolls are needed.');
+                        line('Total: $0', 'rerollPlanTotal');
+                        return;
+                    }
+                    line(framesNeeded + ' frame' + (framesNeeded === 1 ? '' : 's') + ' \u2212 ' + shops
+                        + ' free frame' + (shops === 1 ? '' : 's') + ' = ' + rerolls + ' reroll'
+                        + (rerolls === 1 ? '' : 's') + ', spread as ' + perShop.join(' + ') + ' per shop.');
+                    line('A shop\'s first reroll costs $' + rerollPrice(0) + ', +$1 for each one after it'
+                        + (rerollVouchers > 0 ? ' (' + rerollVouchers + ' reroll voucher' + (rerollVouchers === 1 ? '' : 's') + ' owned)' : '') + '.');
+                    line('Cost per shop: ' + perShop.map(k => '$' + shopCost(k)).join(' + ') + '.');
+                    line('Total: $' + total + ' this ante', 'rerollPlanTotal');
+                };
+
                 const scrollable = document.createElement('div');
                 scrollable.className = 'scrollable no-select';
                 const stub = document.createElement('div');
@@ -2015,7 +2615,10 @@ function searchAndHighlight() {
                     stub.textContent = n + ' seen \u25B8';
                     collapseBtn.textContent = (collapsed ? 'Show seen' : 'Collapse seen') + ' (' + n + ')';
                     collapseBtn.disabled = n === 0;
+                    plan.hidden = !collapsed;
+                    if (collapsed) renderPlan(n);
                 };
+                shopsInput.addEventListener('input', () => { if (!plan.hidden) refresh(); });
                 const markUpTo = (idx) => {
                     for (let i = 0; i <= idx; i++) setSeen(tiles[i], shopKey(i), true);
                     seenState.shopCollapsed.add(anteNum);
