@@ -498,6 +498,51 @@ function searchAndHighlight() {
     .deckCard.clickable:hover {
         background-color: #3a3a3a;
     }
+    /* Cards making up the hand found by "Find first" */
+    .deckCard.handHit {
+        background-color: rgba(255, 179, 71, 0.18);
+        box-shadow: inset 0 0 0 2px #ffb347;
+    }
+    .handResult {
+        flex-basis: 100%;
+        color: #cccccc;
+    }
+    .handResult.noHit {
+        color: #999999;
+    }
+    .holdResult {
+        flex-basis: 100%;
+        color: #cccccc;
+    }
+    .holdResult.noHit {
+        color: #999999;
+    }
+    .holdChips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+    .holdChip {
+        font-size: 11px;
+        padding: 2px 7px;
+    }
+    .enhRow {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 6px;
+    }
+    .enhToggle {
+        font-size: 11px;
+        padding: 2px 8px;
+        opacity: 0.55;
+    }
+    .enhToggle.on {
+        opacity: 1;
+        color: #ffd479;
+        outline: 1px solid #ffd479;
+    }
     .deckPos {
         font-weight: bold;
         color: #ffffff;
@@ -803,6 +848,52 @@ function searchAndHighlight() {
         padding-left: 8px;
         margin-left: 4px;
     }
+    /* Jump bar: hop straight to a position or a shop frame instead of dragging */
+    .jumpBar {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 6px;
+        font-size: 12px;
+    }
+    .jumpLabel {
+        color: #999999;
+    }
+    .jumpInput {
+        width: 58px;
+        font-size: 12px;
+        padding: 2px 4px;
+    }
+    .jumpBar .frameBtn {
+        font-size: 11px;
+        padding: 2px 7px;
+        min-width: 24px;
+    }
+    .jumpBar .frameBtn.currentFrame {
+        color: #ffd479;
+        outline: 1px solid #ffd479;
+    }
+    /* Position number on a tile, so the number you type is the number you can read */
+    .queuePos {
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        font-size: 9px;
+        line-height: 1;
+        padding: 1px 3px;
+        border-radius: 3px;
+        background-color: rgba(0, 0, 0, 0.45);
+        color: #aaaaaa;
+        pointer-events: none;
+    }
+    .jumpFlash {
+        animation: jumpFlash 1.1s ease-out;
+    }
+    @keyframes jumpFlash {
+        from { box-shadow: 0 0 0 3px #ffd479; }
+        to   { box-shadow: 0 0 0 3px rgba(255, 212, 121, 0); }
+    }
     /* The shop you are standing in, taken from an imported save */
     .queueItem.currentShop, .packItem.currentShop {
         background-color: rgba(120, 180, 255, 0.10);
@@ -991,6 +1082,17 @@ function searchAndHighlight() {
     }
 
 
+    /* Pick-order hint under a pack whose cards can be clicked into the deck */
+    .packItem > .packAddHint {
+        flex-basis: 100%;
+        width: auto;
+        align-items: flex-start;
+        text-align: left;
+        margin-top: 2px;
+        font-size: 10px;
+        color: #8a8a8a;
+    }
+
     .packItem .cardName {
         font-size: 10px;
         margin-bottom: 3px;
@@ -1143,7 +1245,8 @@ function searchAndHighlight() {
                 const packsMatch = match.match(/Packs:([\s\S]*?)(?=(?:==ANTE \d+==|$))/);
 
                 const boss = bossMatch ? bossMatch[1].trim() : '';
-                const voucher = voucherMatch ? voucherMatch[1].trim() : '';
+                // One roll per ante normally; more when the ante is replayed (Hieroglyph).
+                const anteVouchers = voucherMatch ? voucherMatch[1].trim().split(',').map(v => v.trim()).filter(v => v !== '') : [];
                 const tags = tagsMatch ? tagsMatch[1].trim().split(',').map(tag => tag.trim()) : [];
                 const sixthSense = sixthMatch ? sixthMatch[1].trim().split(',').map(card => card.trim()) : [];
                 // Each Perkeo entry is "card@shop/trigger" (see index.html).
@@ -1155,7 +1258,7 @@ function searchAndHighlight() {
                 const currentShopCount = currentShopMatch ? currentShopMatch[1].split(',').filter(x => x.trim()).length : 0;
                 const packs = packsMatch ? packsMatch[1].trim().split('\n').filter(item => item.trim() !== '') : [];
 
-                shopQueues.push({ title, queue, boss, voucher, tags, sixthSense, perkeo, generators, packs, resumed: resumedMatch ? resumedMatch[1].trim() : null, currentShopCount, raw: match });
+                shopQueues.push({ title, queue, boss, anteVouchers, tags, sixthSense, perkeo, generators, packs, resumed: resumedMatch ? resumedMatch[1].trim() : null, currentShopCount, raw: match });
             });
         }
 
@@ -1777,6 +1880,26 @@ function searchAndHighlight() {
         });
     }
 
+    // Text box backed by the shared Joker / consumable name list.
+    function makeNameInput(placeholder) {
+        if (!document.getElementById('ownedNames')) {
+            const dl = document.createElement('datalist');
+            dl.id = 'ownedNames';
+            jokers.concat(tarotsAndPlanets).forEach(c => { const o = document.createElement('option'); o.value = c.name; dl.appendChild(o); });
+            document.body.appendChild(dl);
+        }
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.placeholder = placeholder;
+        input.setAttribute('list', 'ownedNames');
+        input.className = 'ownedNameInput';
+        return input;
+    }
+
+    // What the hold test is trying in each ante, kept across re-renders. Not persisted:
+    // it is a scratch question, not part of the run.
+    const holdTestState = new Map();
+
     function makeVoucherTile(name) {
         const tile = document.createElement('div');
         tile.className = 'voucherTile';
@@ -1853,7 +1976,7 @@ function searchAndHighlight() {
         scrollingContainer.innerHTML = ''; // Clear previous content
         loadSeenState();
 
-        shopQueues.forEach(({ title, queue, boss, voucher, tags, sixthSense, perkeo, generators, packs, resumed, currentShopCount, raw }) => {
+        shopQueues.forEach(({ title, queue, boss, anteVouchers, tags, sixthSense, perkeo, generators, packs, resumed, currentShopCount, raw }) => {
             const anteNum = parseInt((title.match(/\d+/) || ['0'])[0], 10);
             const os = window.ownedState;
             const vs = window.voucherState;
@@ -1870,7 +1993,7 @@ function searchAndHighlight() {
             // Whole ante is collapsible; its contents are only built on first expand.
             const anteLabel = title.replace(/=/g, '').trim()
                 + (boss ? '  |  Boss: ' + boss : '')
-                + (voucher ? '  |  Voucher: ' + voucher : '')
+                + (anteVouchers.length > 0 ? '  |  Voucher' + (anteVouchers.length > 1 ? 's' : '') + ': ' + anteVouchers.join(', ') : '')
                 + (tags.length > 0 ? '  |  Tags: ' + tags.join(', ') : '')
                 + (resumed ? '  |  \u23EF Resumed from save' : '');
             // A Negative Joker anywhere in this ante's generation paths also highlights the
@@ -1882,21 +2005,32 @@ function searchAndHighlight() {
             queueInfo.className = 'queueInfo';
 
             const voucherElement = document.createElement('div');
-            voucherElement.innerHTML = '<b><u>Voucher</u></b>';
+            voucherElement.innerHTML = '<b><u>Voucher' + (anteVouchers.length > 1 ? 's' : '') + '</u></b>';
             voucherElement.style = "font-size: 16px";
-            if (voucher) {
+
+            const vouchersContainer = document.createElement('div');
+            vouchersContainer.className = 'tagsContainer';
+            anteVouchers.forEach((voucherName, idx) => {
                 const voucherContainer = document.createElement('div');
                 voucherContainer.className = 'voucherContainer';
 
-                voucherContainer.appendChild(makeVoucherSprite(voucher));
+                voucherContainer.appendChild(makeVoucherSprite(voucherName));
 
                 const voucherNameElement = document.createElement('div');
-                voucherNameElement.textContent = voucher;
+                voucherNameElement.textContent = voucherName;
                 voucherNameElement.classList.add('voucherName');
                 voucherContainer.appendChild(voucherNameElement);
 
+                // Anything past the first only shows up if this ante gets replayed.
+                if (idx > 0) {
+                    const rollLabel = document.createElement('div');
+                    rollLabel.className = 'modifier';
+                    rollLabel.textContent = 'Roll ' + (idx + 1);
+                    voucherContainer.appendChild(rollLabel);
+                }
+
                 if (vs) {
-                    const bought = vs.purchases[voucher];
+                    const bought = vs.purchases[voucherName];
                     voucherContainer.classList.add('clickable');
                     voucherContainer.title = bought !== undefined
                         ? 'Click to mark as not bought'
@@ -1909,12 +2043,44 @@ function searchAndHighlight() {
                         voucherContainer.appendChild(boughtLabel);
                     }
                     voucherContainer.addEventListener('click', () => {
-                        if (vs.purchases[voucher] !== undefined) vs.unbuy(voucher);
-                        else vs.buy(voucher, anteNum);
+                        if (vs.purchases[voucherName] !== undefined) vs.unbuy(voucherName);
+                        else vs.buy(voucherName, anteNum);
                     });
                 }
 
-                voucherElement.appendChild(voucherContainer);
+                vouchersContainer.appendChild(voucherContainer);
+            });
+            voucherElement.appendChild(vouchersContainer);
+
+            // Reveal the next roll of this ante's voucher. Hieroglyph and Petroglyph drop the
+            // ante, so this ante's Boss can be beaten again, and each time it is the voucher
+            // is rolled once more from the same per-ante stream.
+            if (vs && vs.extra) {
+                const voucherControls = document.createElement('div');
+                voucherControls.className = 'packControls';
+
+                const moreBtn = document.createElement('button');
+                moreBtn.className = 'smallButton';
+                moreBtn.textContent = 'Reveal next voucher';
+                moreBtn.title = 'For a replayed ante: Hieroglyph / Petroglyph drop the ante, and beating this ante\u2019s Boss again rolls the next voucher. Mark this ante\u2019s voucher as bought first so it leaves the pool.';
+                moreBtn.addEventListener('click', () => vs.more(anteNum));
+                voucherControls.appendChild(moreBtn);
+
+                const extra = vs.extra[anteNum] || 0;
+                if (extra > 0) {
+                    const extraNote = document.createElement('span');
+                    extraNote.className = 'modifier';
+                    extraNote.textContent = '+' + extra + ' extra';
+                    voucherControls.appendChild(extraNote);
+
+                    const resetBtn = document.createElement('button');
+                    resetBtn.className = 'smallButton';
+                    resetBtn.textContent = 'Reset';
+                    resetBtn.addEventListener('click', () => vs.reset(anteNum));
+                    voucherControls.appendChild(resetBtn);
+                }
+
+                voucherElement.appendChild(voucherControls);
             }
             queueInfo.appendChild(voucherElement);
 
@@ -2229,18 +2395,8 @@ function searchAndHighlight() {
 
                     const controls = document.createElement('div');
                     controls.className = 'deckControls';
-                    const nameInput = document.createElement('input');
-                    nameInput.type = 'text';
-                    nameInput.placeholder = 'Joker / consumable name';
-                    nameInput.setAttribute('list', 'ownedNames');
-                    nameInput.className = 'ownedNameInput';
+                    const nameInput = makeNameInput('Joker / consumable name');
                     remember(nameInput, 'owned:name');
-                    if (!document.getElementById('ownedNames')) {
-                        const dl = document.createElement('datalist');
-                        dl.id = 'ownedNames';
-                        jokers.concat(tarotsAndPlanets).forEach(c => { const o = document.createElement('option'); o.value = c.name; dl.appendChild(o); });
-                        document.body.appendChild(dl);
-                    }
                     const addBtn = document.createElement('button');
                     addBtn.className = 'smallButton';
                     addBtn.textContent = 'Add (this ante)';
@@ -2284,6 +2440,33 @@ function searchAndHighlight() {
                     note.textContent = 'Click a Joker or consumable in any queue to mark it acquired this ante. Held cards leave every pool, and any draw that would have produced one rerolls (the game\'s _resample keys), so later queue entries can shift.';
                     body.appendChild(note);
 
+                    // Jokers gated on an enhancement being in the deck. Not profile unlocks:
+                    // they are out of the pool until the deck holds a card with that
+                    // enhancement, and they stay in once it has, even if the card goes.
+                    if (os.enhancementJokers) {
+                        const enhRow = document.createElement('div');
+                        enhRow.className = 'enhRow';
+                        const enhLabel = document.createElement('span');
+                        enhLabel.className = 'jumpLabel';
+                        enhLabel.textContent = 'In the pool:';
+                        enhRow.appendChild(enhLabel);
+                        os.enhancementJokers.forEach(({ joker, enhancement }) => {
+                            const on = !!os.enhancementOn[joker];
+                            const btn = document.createElement('button');
+                            btn.className = 'smallButton enhToggle' + (on ? ' on' : '');
+                            btn.textContent = joker;
+                            btn.title = (on ? 'In every pool. Click to take it back out.' : 'Out of every pool. Click to put it in.')
+                                + ' It switches itself on the moment a ' + enhancement + ' card is added to the tracked deck, and stays on after that card goes.';
+                            btn.addEventListener('click', () => os.setEnhancementJoker(joker, !on));
+                            enhRow.appendChild(btn);
+                        });
+                        const enhNote = document.createElement('div');
+                        enhNote.className = 'modifier deckNote';
+                        enhNote.textContent = 'These five need their enhancement in your deck before the game will offer them. Adding an enhanced card in Deck & Draw Order turns the matching one on by itself.';
+                        enhRow.appendChild(enhNote);
+                        body.appendChild(enhRow);
+                    }
+
                     // One tile per distinct card, with a copy count. Actions apply to one copy
                     // at a time: the most recently acquired copy that is still open.
                     const grid = document.createElement('div');
@@ -2318,7 +2501,8 @@ function searchAndHighlight() {
                         const perkeoCopies = copies.filter(o => o.perkeo).length;
                         since.textContent = (earliest === anteNum ? 'Got this ante' : 'Since ante ' + earliest)
                             + (perkeoCopies > 0 ? ', ' + perkeoCopies + ' Negative from Perkeo' : '')
-                            + (closing.length > 0 ? ', ' + (copies.length > 1 ? closing.length + ' gone' : 'gone') + ' after this ante' : '');
+                            + (closing.length > 0 ? ', ' + (copies.length > 1 ? closing.length + ' gone' : 'gone') + ' after this ante' : '')
+                            + (closing.some(o => o.extinct) ? ' \u2014 extinct' : '');
                         tile.appendChild(since);
                         const row = document.createElement('div');
                         row.className = 'ownedActions';
@@ -2345,12 +2529,28 @@ function searchAndHighlight() {
                             rel.addEventListener('click', () => os.release(open[open.length - 1].id, anteNum));
                             row.appendChild(rel);
                         }
-                        if (closing.length > 0) {
+                        // An extinct copy is only reversible through "Undo extinct": putting it
+                        // back in your Jokers while the species stays locked out makes no sense.
+                        const closingKeepable = closing.filter(o => !o.extinct);
+                        if (closingKeepable.length > 0) {
                             const keep = document.createElement('button');
                             keep.className = 'smallButton';
                             keep.textContent = copies.length > 1 ? 'Keep one' : 'Still held';
-                            keep.addEventListener('click', () => os.unrelease(closing[closing.length - 1].id));
+                            keep.addEventListener('click', () => os.unrelease(closingKeepable[closingKeepable.length - 1].id));
                             row.appendChild(keep);
+                        }
+                        // Gros Michel and Cavendish can pop instead of being sold: gone from your
+                        // Jokers and out of every pool for the rest of the run.
+                        if (os && (os.extinctable || []).indexOf(name) >= 0) {
+                            const ext = document.createElement('button');
+                            ext.className = 'smallButton';
+                            const isExtinct = (os.extinct || {})[name] !== undefined;
+                            ext.textContent = isExtinct ? 'Undo extinct' : 'Extinct';
+                            ext.title = isExtinct
+                                ? 'Put it back in your Jokers and back in the pools'
+                                : 'Went extinct this ante: every copy goes, and it never shows up in a shop or pack again (Showman does not bring it back)';
+                            ext.addEventListener('click', () => isExtinct ? os.unextinguish(name) : os.extinguish(name, anteNum));
+                            row.appendChild(ext);
                         }
                         const del = document.createElement('button');
                         del.className = 'smallButton';
@@ -2362,6 +2562,27 @@ function searchAndHighlight() {
                         grid.appendChild(tile);
                     });
                     body.appendChild(grid);
+
+                    // Extinct Jokers are gone from the grid from the next ante on, so list them
+                    // here in every ante: it is the only place the record can be undone.
+                    const extinctNames = os ? Object.keys(os.extinct || {}) : [];
+                    if (extinctNames.length > 0) {
+                        const extinctRow = document.createElement('div');
+                        extinctRow.className = 'packControls';
+                        const extinctLabel = document.createElement('span');
+                        extinctLabel.className = 'modifier';
+                        extinctLabel.textContent = 'Extinct: ' + extinctNames.map(n => n + ' (ante ' + os.extinct[n] + ')').join(', ')
+                            + ' \u2014 out of every shop and pack from then on.';
+                        extinctRow.appendChild(extinctLabel);
+                        extinctNames.forEach(n => {
+                            const undo = document.createElement('button');
+                            undo.className = 'smallButton';
+                            undo.textContent = 'Undo ' + n;
+                            undo.addEventListener('click', () => os.unextinguish(n));
+                            extinctRow.appendChild(undo);
+                        });
+                        body.appendChild(extinctRow);
+                    }
 
                     // Effects that hit one of your Jokers at random, and what they would hit.
                     const fx = document.createElement('div');
@@ -2490,11 +2711,15 @@ function searchAndHighlight() {
                             // A card destroyed during round r is gone from the next round on.
                             const nextA = ri < anteRounds.length - 1 ? anteNum : anteNum + 1;
                             const nextR = ri < anteRounds.length - 1 ? (anteRounds[ri + 1].round || (ri + 2)) : 1;
+                            const deckTiles = [];
                             rd.cards.forEach((card, idx) => {
                                 const tile = makeDeckCardTile(card, idx + 1, idx < rd.hand);
                                 attachDeckCardMenu(tile, card, r, nextA, nextR);
                                 scroll.appendChild(tile);
+                                deckTiles.push(tile);
                             });
+                            appendJumpBar(rb, scroll, deckTiles, { min: 8 });
+                            appendHandFinder(rb, scroll, deckTiles, rd.cards, rd.hand);
                             rb.appendChild(scroll);
                             attachDragScroll(scroll);
                         }, null, true);
@@ -2525,6 +2750,8 @@ function searchAndHighlight() {
 
                 // Reroll planner, shown while the seen run is collapsed: how deep the first
                 // unseen card sits and what it costs to reroll down to it this ante.
+                appendHoldTest(body, anteNum, os);
+
                 const plan = document.createElement('div');
                 plan.className = 'rerollPlan';
                 plan.hidden = true;
@@ -2627,6 +2854,7 @@ function searchAndHighlight() {
                 };
                 queue.forEach((item, idx) => {
                     const tile = createQueueItem(item);
+                    tile.appendChild(makePosBadge(idx + 1, 'Card ' + (idx + 1) + ', frame ' + (Math.floor(idx / shopSlots) + 1)));
                     if (idx > 0 && idx % shopSlots === 0) tile.classList.add('frameStart');
                     if (currentShopCount && idx < currentShopCount) {
                         tile.classList.add('currentShop');
@@ -2654,6 +2882,14 @@ function searchAndHighlight() {
                     queueContainer.querySelectorAll('.seenable.seen').forEach(t => t.classList.remove('seen'));
                     saveSeenState(); refresh();
                 });
+                // Jumping into a collapsed run of seen cards has to open it first.
+                const revealSeen = () => {
+                    if (!seenState.shopCollapsed.has(anteNum)) return;
+                    seenState.shopCollapsed.delete(anteNum);
+                    saveSeenState();
+                    refresh();
+                };
+                appendJumpBar(body, scrollable, tiles, { frameSize: shopSlots, reveal: revealSeen });
                 body.appendChild(scrollable);
                 attachDragScroll(scrollable);
                 refresh();
@@ -2682,12 +2918,16 @@ function searchAndHighlight() {
                         const rowBody = createCollapsible(groupBody, title + ':' + label, rowLabel, (body) => {
                             const generatorScrollable = document.createElement('div');
                             generatorScrollable.className = 'scrollable no-select';
+                            const genTiles = [];
                             cards.forEach((card, idx) => {
                                 const genTile = createQueueItem((idx + 1) + ') ' + card);
+                                genTile.appendChild(makePosBadge(idx + 1));
                                 attachSeenToggle(genTile, anteNum + ':gen:' + label + ':' + idx);
                                 attachOwnToggle(genTile, parseCardItem(card).cardName, anteNum);
                                 generatorScrollable.appendChild(genTile);
+                                genTiles.push(genTile);
                             });
+                            appendJumpBar(body, generatorScrollable, genTiles, { min: 8 });
                             body.appendChild(generatorScrollable);
                             attachDragScroll(generatorScrollable);
                         });
@@ -2724,6 +2964,9 @@ function searchAndHighlight() {
                     packNameElement.classList.add('packName');
                     packItem.appendChild(packNameElement);
 
+                    // Playing cards are the ones with a click-to-add chooser, and the only
+                    // ones whose pick order matters.
+                    let addableCards = 0;
                     packCards.forEach((cardName, ci) => {
                         const { cardName: parsedCardName, itemModifiers, itemStickers } = parseCardItem(cardName);
                         const itemType = determineItemType(parsedCardName);
@@ -2755,6 +2998,7 @@ function searchAndHighlight() {
                             });
                         } else {
                             const { rank, suit, modifiers, seal } = parseStandardCardName(cardName);
+                            addableCards++;
 
                             cardContainer.appendChild(makeStandardCardSprite(rank, suit, modifiers, seal));
                             attachDeckAddChooser(cardContainer, cardName, anteNum);
@@ -2783,6 +3027,17 @@ function searchAndHighlight() {
 
                         packItem.appendChild(cardContainer);
                     });
+
+                    // A card's sort_id is stamped when the pack is created, so two cards taken
+                    // from one pack sort in the pack's own order however you pick them. The
+                    // tracker appends adds in click order, so clicking out of order shifts the
+                    // draw order of every round after it.
+                    if (addableCards > 1) {
+                        const hint = document.createElement('div');
+                        hint.className = 'packAddHint';
+                        hint.textContent = 'Taking more than one? Click them left to right \u2014 new cards keep the pack\u2019s order, not the order you buy them.';
+                        packItem.appendChild(hint);
+                    }
 
                     packsContainer.appendChild(packItem);
                 });
@@ -2870,6 +3125,385 @@ function searchAndHighlight() {
         scrollable.addEventListener('scroll', updateZones);
         if (window.ResizeObserver) new ResizeObserver(updateZones).observe(scrollable);
         requestAnimationFrame(updateZones);
+    }
+
+    // ---- "First X hand" search over a round's draw order ---------------------
+    // Answers "how deep into this round before a Straight Flush exists?" by growing the
+    // prefix of the draw order one card at a time and testing it, so the first prefix
+    // that contains the hand is the earliest draw position it can be made at. Everything
+    // drawn is assumed to still be reachable: you keep what the hand needs and throw the
+    // rest, which is what the discard count reports on.
+    const RANK_VALUE = { '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10, 'Jack': 11, 'Queen': 12, 'King': 13, 'Ace': 14 };
+
+    function groupByRank(pool) {
+        const byRank = new Map();
+        pool.forEach(c => { const l = byRank.get(c.v) || []; l.push(c); byRank.set(c.v, l); });
+        return [...byRank.values()];
+    }
+    function handOfAKind(pool, n) {
+        const hit = groupByRank(pool).find(l => l.length >= n);
+        return hit ? hit.slice(0, n) : null;
+    }
+    function handTwoPair(pool) {
+        const pairs = groupByRank(pool).filter(l => l.length >= 2);
+        return pairs.length >= 2 ? pairs[0].slice(0, 2).concat(pairs[1].slice(0, 2)) : null;
+    }
+    function handFullHouse(pool) {
+        const groups = groupByRank(pool);
+        const three = groups.find(l => l.length >= 3);
+        if (!three) return null;
+        const two = groups.find(l => l !== three && l.length >= 2);
+        return two ? three.slice(0, 3).concat(two.slice(0, 2)) : null;
+    }
+    // Five consecutive ranks, with the Ace running both ends (A-2-3-4-5 and 10-J-Q-K-A).
+    // Jokers that loosen this - Shortcut's gaps, Four Fingers' four-card straights - are
+    // not modelled, so this is the straight the base game would score.
+    function handStraight(pool) {
+        const first = new Map();
+        pool.forEach(c => { if (!first.has(c.v)) first.set(c.v, c); });
+        const runs = [];
+        for (let lo = 2; lo <= 10; lo++) runs.push([lo, lo + 1, lo + 2, lo + 3, lo + 4]);
+        runs.push([14, 2, 3, 4, 5]);
+        const hit = runs.find(run => run.every(v => first.has(v)));
+        return hit ? hit.map(v => first.get(v)) : null;
+    }
+    // A Wild card counts as every suit, so it joins any suit's pool.
+    function suitPool(pool, suit) { return pool.filter(c => c.wild || c.suit === suit); }
+    function bySuit(pool, fn) {
+        for (const suit of CARD_SUITS) {
+            const hit = fn(suitPool(pool, suit));
+            if (hit) return hit;
+        }
+        return null;
+    }
+
+    const POKER_HANDS = [
+        { name: 'High Card',        find: (p) => p.length ? [p[0]] : null },
+        { name: 'Pair',             find: (p) => handOfAKind(p, 2) },
+        { name: 'Two Pair',         find: handTwoPair },
+        { name: 'Three of a Kind',  find: (p) => handOfAKind(p, 3) },
+        { name: 'Straight',         find: handStraight },
+        { name: 'Flush',            find: (p) => bySuit(p, (q) => q.length >= 5 ? q.slice(0, 5) : null) },
+        { name: 'Full House',       find: handFullHouse },
+        { name: 'Four of a Kind',   find: (p) => handOfAKind(p, 4) },
+        { name: 'Straight Flush',   find: (p) => bySuit(p, handStraight) },
+        { name: 'Five of a Kind',   find: (p) => handOfAKind(p, 5) },
+        { name: 'Flush House',      find: (p) => bySuit(p, handFullHouse) },
+        { name: 'Flush Five',       find: (p) => bySuit(p, (q) => handOfAKind(q, 5)) },
+    ];
+
+    function findFirstHand(cards, handName) {
+        const spec = POKER_HANDS.find(h => h.name === handName);
+        if (!spec) return null;
+        const pool = [];
+        for (let i = 0; i < cards.length; i++) {
+            const parsed = parseStandardCardName(cards[i].name);
+            // A Stone card has no rank and no suit, so it can never be part of the hand.
+            if (parsed && !parsed.modifiers.includes('Stone') && RANK_VALUE[parsed.rank]) {
+                pool.push({ i: i, v: RANK_VALUE[parsed.rank], suit: parsed.suit, wild: parsed.modifiers.includes('Wild') });
+            }
+            const hit = spec.find(pool);
+            if (hit) return { at: i + 1, indices: hit.map(c => c.i).sort((a, b) => a - b) };
+        }
+        return null;
+    }
+
+    // Cheapest route to draw position `at`: hold the cards the hand needs, throw the rest
+    // five at a time. Returns the number of discards, or null when the hand fills up with
+    // cards it cannot afford to throw.
+    function discardsToReach(at, needed, handSize) {
+        const keep = new Set(needed);
+        let drawn = Math.min(handSize, at);
+        let held = new Set();
+        for (let i = 0; i < drawn; i++) held.add(i);
+        let discards = 0;
+        while (drawn < at) {
+            const spare = [...held].filter(i => !keep.has(i));
+            if (spare.length === 0) return null;
+            const n = Math.min(5, spare.length, at - drawn);
+            spare.slice(0, n).forEach(i => held.delete(i));
+            for (let k = 0; k < n; k++) held.add(drawn + k);
+            drawn += n;
+            discards++;
+        }
+        return discards;
+    }
+
+    // "Find first <hand>" control for one round of the draw order.
+    function appendHandFinder(parent, scrollable, tiles, cards, handSize) {
+        const bar = document.createElement('div');
+        bar.className = 'jumpBar';
+        const label = document.createElement('span');
+        label.className = 'jumpLabel';
+        label.textContent = 'Find first';
+        bar.appendChild(label);
+
+        const sel = document.createElement('select');
+        POKER_HANDS.forEach(h => {
+            const o = document.createElement('option');
+            o.value = h.name; o.textContent = h.name;
+            sel.appendChild(o);
+        });
+        sel.value = 'Straight Flush';
+        remember(sel, 'deck:findHand');
+        bar.appendChild(sel);
+
+        const result = document.createElement('div');
+        result.className = 'modifier handResult';
+
+        const clear = () => tiles.forEach(t => t.classList.remove('handHit'));
+        const run = () => {
+            clear();
+            const hit = findFirstHand(cards, sel.value);
+            if (!hit) {
+                result.className = 'modifier handResult noHit';
+                result.textContent = 'No ' + sel.value + ' anywhere in this round\u2019s ' + cards.length + ' cards.';
+                return;
+            }
+            result.className = 'modifier handResult';
+            hit.indices.forEach(i => tiles[i].classList.add('handHit'));
+            scrollTileIntoView(scrollable, tiles[hit.indices[hit.indices.length - 1]]);
+            const at = ['First ' + sel.value + ' completes at card ' + hit.at
+                + ' (position' + (hit.indices.length === 1 ? ' ' : 's ') + hit.indices.map(i => i + 1).join(', ') + ').'];
+            if (hit.at <= handSize) {
+                at.push('Already in the opening hand.');
+            } else {
+                const d = discardsToReach(hit.at, hit.indices, handSize);
+                at.push(d === null
+                    ? 'Not reachable by discarding: the hand fills with cards it has to keep.'
+                    : d + ' discard' + (d === 1 ? '' : 's') + ' to get there, keeping those cards and throwing the rest'
+                        + (d > 3 ? ' \u2014 more than the usual 3.' : '.'));
+            }
+            result.textContent = at.join(' ');
+        };
+
+        const btn = document.createElement('button');
+        btn.className = 'smallButton';
+        btn.textContent = 'Find';
+        btn.addEventListener('click', run);
+        bar.appendChild(btn);
+        sel.addEventListener('change', () => { clear(); result.textContent = ''; });
+        bar.appendChild(result);
+        parent.appendChild(bar);
+        return bar;
+    }
+
+    // ---- Hold test ----------------------------------------------------------
+    // "If I parked these Jokers in my hand, how much more often would that one show up?"
+    // Holding a card takes it out of its pool, and every roll that would have produced it
+    // resamples, so with a nearly-complete collection - where a rarity pool can be down to a
+    // handful - holding a few cards measurably changes how often a given one comes up. The
+    // held cards are hypothetical: they are applied to this ante's rolls and never recorded
+    // as owned. Each check replays the analysis twice (with and without), off-page.
+    function appendHoldTest(parent, anteNum, os) {
+        const ht = window.holdTest;
+        if (!ht) return null;
+        const state = holdTestState.get(anteNum) || { holds: [], target: '' };
+        holdTestState.set(anteNum, state);
+
+        const bar = document.createElement('div');
+        bar.className = 'jumpBar holdTest';
+        const addLabel = (text) => {
+            const el = document.createElement('span');
+            el.className = 'jumpLabel';
+            el.textContent = text;
+            bar.appendChild(el);
+        };
+        const addButton = (text, title, onClick, cls) => {
+            const b = document.createElement('button');
+            b.className = 'smallButton' + (cls ? ' ' + cls : '');
+            b.textContent = text;
+            b.title = title;
+            b.addEventListener('click', onClick);
+            bar.appendChild(b);
+            return b;
+        };
+
+        const result = document.createElement('div');
+        result.className = 'modifier holdResult';
+
+        const chips = document.createElement('span');
+        chips.className = 'holdChips';
+
+        const stale = () => {
+            result.className = 'modifier holdResult noHit';
+            result.textContent = state.holds.length === 0 && !state.target ? '' : 'Press Check.';
+        };
+
+        const renderChips = () => {
+            chips.innerHTML = '';
+            state.holds.forEach((name, i) => {
+                const chip = document.createElement('button');
+                chip.className = 'smallButton holdChip';
+                chip.textContent = name + ' \u00D7';
+                chip.title = 'Stop pretending to hold ' + name;
+                chip.addEventListener('click', () => { state.holds.splice(i, 1); renderChips(); stale(); });
+                chips.appendChild(chip);
+            });
+        };
+
+        addLabel('Hold');
+        const holdInput = makeNameInput('Joker to hold');
+        bar.appendChild(holdInput);
+        const addHold = () => {
+            const name = holdInput.value.trim();
+            if (determineItemType(name) === 'unknown') { holdInput.classList.add('badName'); return; }
+            holdInput.classList.remove('badName');
+            if (state.holds.indexOf(name) < 0) state.holds.push(name);
+            holdInput.value = '';
+            renderChips();
+            stale();
+        };
+        holdInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addHold(); } });
+        addButton('Add', 'Pretend to hold this card for this ante', addHold);
+        bar.appendChild(chips);
+
+        addLabel('to find');
+        const targetInput = makeNameInput('Joker to look for');
+        targetInput.value = state.target || '';
+        targetInput.addEventListener('input', () => { state.target = targetInput.value.trim(); stale(); });
+        bar.appendChild(targetInput);
+
+        const nameOf = (line) => parseCardItem(line).cardName;
+        const check = () => {
+            const target = targetInput.value.trim();
+            state.target = target;
+            if (determineItemType(target) === 'unknown') {
+                targetInput.classList.add('badName');
+                result.className = 'modifier holdResult noHit';
+                result.textContent = 'Pick a Joker or consumable to look for.';
+                return;
+            }
+            targetInput.classList.remove('badName');
+            if (state.holds.length === 0) {
+                result.className = 'modifier holdResult noHit';
+                result.textContent = 'Add at least one card to hold.';
+                return;
+            }
+            const spots = (lines) => lines.map((l, i) => nameOf(l) === target ? i + 1 : 0).filter(Boolean);
+            const before = spots(ht.queue(anteNum, []));
+            const after = spots(ht.queue(anteNum, state.holds));
+            const delta = after.length - before.length;
+            const at = (list) => list.length ? ' (card' + (list.length === 1 ? ' ' : 's ') + list.join(', ') + ')' : '';
+            const parts = [target + ' in this ante\u2019s queue: ' + before.length + at(before)
+                + ' \u2192 ' + after.length + at(after) + ' while holding ' + state.holds.join(', ') + '.'];
+            parts.push(delta > 0 ? '+' + delta + ' extra.' : delta < 0 ? delta + ' fewer.' : 'No change.');
+            if (os && os.showman) parts.push('Showman is held, so nothing rerolls around held cards \u2014 untick it to see an effect.');
+            result.className = 'modifier holdResult';
+            result.textContent = parts.join(' ');
+        };
+
+        addButton('Check', 'Replay this ante with and without those cards held', check);
+        addButton('Clear', 'Drop the held cards and the target', () => {
+            state.holds.length = 0; state.target = ''; targetInput.value = '';
+            targetInput.classList.remove('badName'); holdInput.classList.remove('badName');
+            renderChips(); stale();
+        });
+        bar.appendChild(result);
+        renderChips();
+        stale();
+        parent.appendChild(bar);
+        return bar;
+    }
+
+    // ---- Jumping around a side-scrolling row --------------------------------
+    // Rows get long (a 40-card shop queue, a 54-card deck order) and dragging to
+    // "frame 6" or "joker 23" is slow and easy to overshoot. Every long row gets a bar
+    // that scrolls straight to a position, to a shop frame, or back to the start.
+
+    // Bring `tile` to the left edge of its row. `reveal` runs first when the tile is
+    // hidden, so a collapsed run of seen cards opens before we jump into it.
+    function scrollTileIntoView(scrollable, tile, reveal) {
+        if (!tile) return;
+        if (tile.hidden && reveal) reveal();
+        if (tile.hidden) return;
+        const left = Math.max(0, scrollable.scrollLeft + tile.getBoundingClientRect().left - scrollable.getBoundingClientRect().left - 6);
+        // Gliding across 40 cards is slow and hard to follow, so only short hops animate.
+        const far = Math.abs(left - scrollable.scrollLeft) > 2 * scrollable.clientWidth;
+        scrollable.scrollTo({ left: left, behavior: far ? 'auto' : 'smooth' });
+        tile.classList.remove('jumpFlash');
+        void tile.offsetWidth;  // restart the flash when the same tile is picked twice
+        tile.classList.add('jumpFlash');
+        tile.addEventListener('animationend', () => tile.classList.remove('jumpFlash'), { once: true });
+    }
+
+    function makePosBadge(pos, title) {
+        const badge = document.createElement('div');
+        badge.className = 'queuePos';
+        badge.textContent = pos;
+        if (title) badge.title = title;
+        return badge;
+    }
+
+    // opts: { frameSize } one button per shop frame, { reveal } un-collapse before
+    // jumping, { min } skip the bar entirely on rows shorter than this.
+    function appendJumpBar(parent, scrollable, tiles, opts) {
+        const o = opts || {};
+        if (tiles.length <= (o.min || 0)) return null;
+        const bar = document.createElement('div');
+        bar.className = 'jumpBar';
+        const frameBtns = [];
+        const jumpTo = (idx) => {
+            if (!(idx >= 0 && idx < tiles.length)) return;
+            scrollTileIntoView(scrollable, tiles[idx], o.reveal);
+            if (o.frameSize) {
+                const f = Math.floor(idx / o.frameSize);
+                frameBtns.forEach((b, i) => b.classList.toggle('currentFrame', i === f));
+            }
+        };
+        const addLabel = (text) => {
+            const s = document.createElement('span');
+            s.className = 'jumpLabel';
+            s.textContent = text;
+            bar.appendChild(s);
+        };
+        const addButton = (text, title, onClick, cls) => {
+            const b = document.createElement('button');
+            b.className = 'smallButton' + (cls ? ' ' + cls : '');
+            b.textContent = text;
+            b.title = title;
+            b.addEventListener('click', onClick);
+            bar.appendChild(b);
+            return b;
+        };
+
+        // A number box that jumps to the nth card (or the first card of the nth frame).
+        const addInput = (label, count, toIndex) => {
+            addLabel(label);
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.min = 1;
+            input.max = count;
+            input.className = 'jumpInput';
+            input.placeholder = '#';
+            input.title = '1\u2013' + count + ', then Enter';
+            const go = () => jumpTo(toIndex(parseInt(input.value, 10) || 0));
+            input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+            input.addEventListener('change', go);
+            bar.appendChild(input);
+            addButton('Go', 'Jump to that ' + label, go);
+        };
+
+        addLabel('Jump to');
+        addButton('\u25C2 Start', 'Back to card 1', () => jumpTo(0));
+        addInput('card', tiles.length, (n) => n - 1);
+        const frames = o.frameSize ? Math.ceil(tiles.length / o.frameSize) : 0;
+        // One button per frame reads well for a handful; past that it is a wall of
+        // buttons, so long queues get a number box instead.
+        if (frames > 12) addInput('frame', frames, (n) => (n - 1) * o.frameSize);
+        addButton('End \u25B8', 'Jump to card ' + tiles.length, () => jumpTo(tiles.length - 1));
+
+        if (frames > 1 && frames <= 12) {
+            addLabel('Frame');
+            for (let f = 0; f < frames; f++) {
+                const from = f * o.frameSize + 1;
+                const to = Math.min(tiles.length, (f + 1) * o.frameSize);
+                frameBtns.push(addButton(String(f + 1), 'Frame ' + (f + 1) + ': cards ' + from + '\u2013' + to,
+                    () => jumpTo(f * o.frameSize), 'frameBtn'));
+            }
+        }
+        parent.appendChild(bar);
+        return bar;
     }
 
     function attachDragScroll(scrollable) {

@@ -641,6 +641,10 @@
       more: function(ante) { extraSixth[ante] = (extraSixth[ante] || 0) + 1; performAnalysis(); },
       reset: function(ante) { delete extraSixth[ante]; performAnalysis(); }
     };
+    // Extra voucher rolls revealed per ante (ante -> rolls beyond the game's default 1).
+    // Hieroglyph / Petroglyph drop the ante, so an ante's Boss can be beaten more than
+    // once, and each time it is, that ante's voucher is rolled again from its own stream.
+    var extraVouchers = {};
     const DECK_VOUCHERS = {
       "Magic Deck": ["Crystal Ball"],
       "Nebula Deck": ["Telescope"],
@@ -655,6 +659,9 @@
     }
     window.voucherState = {
       purchases: voucherPurchases,
+      extra: extraVouchers,
+      more: function(ante) { extraVouchers[ante] = (extraVouchers[ante] || 0) + 1; performAnalysis(); },
+      reset: function(ante) { delete extraVouchers[ante]; performAnalysis(); },
       get pairs() { return voucherPairs(); },
       get deckVouchers() { return DECK_VOUCHERS[document.getElementById('deck').value] || []; },
       buy: function(name, ante) {
@@ -772,6 +779,7 @@
       add: function(name, ante, round) {
         deckSeq++;
         deckOps.push({ type: 'add', id: 'c' + deckSeq, name: name, ante: ante, round: round, seq: deckSeq });
+        noteEnhancement(name);
         deckChanged();
       },
       // Card leaves the deck from round `round` of ante `ante` (destroyed during the round before).
@@ -786,6 +794,7 @@
         if (name == was) return;
         deckSeq++;
         deckOps.push({ type: 'modify', target: id, name: name, was: was, ante: ante, round: round, seq: deckSeq });
+        noteEnhancement(name);
         deckChanged();
       },
       undo: function(seq) {
@@ -987,6 +996,7 @@
           const enh = SAVE_ENHANCEMENTS[(c.save_fields || {}).center] ; const ed = c.edition && SAVE_EDITIONS[c.edition.type]; const seal = c.seal ? c.seal + ' Seal' : '';
           const name = (seal ? seal + ' ' : '') + (ed ? ed + ' ' : '') + (enh ? enh + ' ' : '') + c.base.value + ' of ' + c.base.suit;
           deckSeq++; deckOps.push({ type: 'add', id: 'c' + deckSeq, name: name, ante: ante, round: roundNow, seq: deckSeq, save: true });
+          noteEnhancement(name);
         });
         const handSizeSaved = (save.cardAreas.hand && save.cardAreas.hand.config && save.cardAreas.hand.config.card_limit) || 8;
         const handBase = 8 + (deckName === 'Painted Deck' ? 2 : 0) + (vouchersFound.includes('Paint Brush') ? 1 : 0) + (vouchersFound.includes('Palette') ? 1 : 0);
@@ -1066,18 +1076,84 @@
     var ownedShowman = false;
     var ownedSeq = 0;
     var ownedStoreKey = null;
+    // Jokers that have gone extinct: name -> the ante it happened in. Gros Michel (and then
+    // Cavendish) leaves your Jokers and never returns to any pool, so from that ante on it is
+    // locked rather than merely held - a lock is what Showman cannot waive, which is exactly
+    // how extinction behaves in the game.
+    var extinctJokers = {};
+    const EXTINCTABLE = ['Gros Michel', 'Cavendish'];
+
+    // Jokers that only join the pool once a card carrying their enhancement is in the deck.
+    // This is a run condition, not a profile unlock: the Joker is out of every shop and pack
+    // until the deck holds, say, a Steel card, and once it is in it stays in - losing the card
+    // again does not take the Joker back out. Switched on automatically when an enhanced card
+    // is added to the tracked deck, and off again only by hand.
+    const ENHANCEMENT_JOKERS = [
+      { joker: 'Steel Joker',   enhancement: 'Steel' },
+      { joker: 'Stone Joker',   enhancement: 'Stone' },
+      { joker: 'Glass Joker',   enhancement: 'Glass' },
+      { joker: 'Golden Ticket', enhancement: 'Gold' },
+      { joker: 'Lucky Cat',     enhancement: 'Lucky' }
+    ];
+    var enhancementJokers = {};   // joker name -> true once it is in the pool
+
+    // Turn on whatever this card's enhancement brings with it. The seal is stripped first so a
+    // Gold Seal is not mistaken for the Gold enhancement.
+    function noteEnhancement(cardName) {
+      var body = String(cardName).replace(/(Purple|Red|Blue|Gold) Seal/, '');
+      var changed = false;
+      ENHANCEMENT_JOKERS.forEach(function (e) {
+        if (!enhancementJokers[e.joker] && new RegExp('\\b' + e.enhancement + '\\b').test(body)) {
+          enhancementJokers[e.joker] = true;
+          changed = true;
+        }
+      });
+      if (changed) saveOwnedState();
+      return changed;
+    }
+
+    // ---- Hypothetical holds ("what if I were holding these?") ----
+    // Holding a Joker takes it out of the pools, and any roll that would have produced it
+    // resamples, so everything after it in a queue shifts. With a nearly-complete collection
+    // a rarity pool can be small enough that parking a few Jokers in your hand measurably
+    // changes how often a given one comes up. These holds are applied for one ante's rolls
+    // and are never recorded as owned; the analysis runs quietly and returns its text so the
+    // page is untouched.
+    var analysisTempHolds = null;   // { ante, names: [] }
+    var analysisQuiet = false;      // build the output string, write nothing to the page
+    window.holdTest = {
+      // That ante's shop queue as "N) Card" lines, with `holds` held for the ante's rolls.
+      queue: function(ante, holds) {
+        var prevHolds = analysisTempHolds, prevQuiet = analysisQuiet;
+        analysisTempHolds = (holds && holds.length) ? { ante: ante, names: holds.slice() } : null;
+        analysisQuiet = true;
+        var text;
+        try { text = performAnalysis(); } finally { analysisTempHolds = prevHolds; analysisQuiet = prevQuiet; }
+        var chunk = (String(text).split('==ANTE ' + ante + '==')[1] || '').split('==ANTE ')[0];
+        var m = chunk.match(/Shop Queue[^:\n]*:([\s\S]*?)(?=Packs:|$)/);
+        if (!m) return [];
+        return m[1].trim().split('\n').map(l => l.trim()).filter(l => l !== '' && !l.startsWith('Current Shop:'));
+      }
+    };
 
     function saveOwnedState() {
-      try { localStorage.setItem(ownedStoreKey, JSON.stringify({ items: ownedItems, showman: ownedShowman, seq: ownedSeq })); } catch (e) { /* page-only */ }
+      try { localStorage.setItem(ownedStoreKey, JSON.stringify({ items: ownedItems, showman: ownedShowman, seq: ownedSeq, extinct: extinctJokers, enhJokers: enhancementJokers })); } catch (e) { /* page-only */ }
     }
     function loadOwnedState(seed, deck) {
       var key = 'theSoulOwned:' + seed + ':' + deck;
       if (key == ownedStoreKey) return;
       ownedStoreKey = key;
       ownedItems.length = 0; ownedShowman = false; ownedSeq = 0;
+      Object.keys(extinctJokers).forEach(k => delete extinctJokers[k]);
+      Object.keys(enhancementJokers).forEach(k => delete enhancementJokers[k]);
       try {
         var st = JSON.parse(localStorage.getItem(key));
-        if (st) { (st.items || []).forEach(o => ownedItems.push(o)); ownedShowman = !!st.showman; ownedSeq = st.seq || 0; }
+        if (st) {
+          (st.items || []).forEach(o => ownedItems.push(o));
+          ownedShowman = !!st.showman; ownedSeq = st.seq || 0;
+          Object.assign(extinctJokers, st.extinct || {});
+          Object.assign(enhancementJokers, st.enhJokers || {});
+        }
       } catch (e) { /* start clean */ }
     }
     function ownedChanged() { saveOwnedState(); performAnalysis(); }
@@ -1143,7 +1219,32 @@
         var idx = ownedItems.findIndex(o => o.id == id);
         if (idx >= 0) { ownedItems.splice(idx, 1); ownedChanged(); }
       },
-      clear: function() { ownedItems.length = 0; ownedShowman = false; ownedChanged(); },
+      extinctable: EXTINCTABLE,
+      get extinct() { return extinctJokers; },
+      enhancementJokers: ENHANCEMENT_JOKERS,
+      get enhancementOn() { return enhancementJokers; },
+      setEnhancementJoker: function(name, on) {
+        if (on) enhancementJokers[name] = true; else delete enhancementJokers[name];
+        ownedChanged();
+      },
+      // Went extinct during ante `ante`: held for that ante, then gone from your Jokers and
+      // out of every pool for the rest of the run. Every copy goes at once - once the
+      // species is extinct there is no second one left anywhere.
+      extinguish: function(name, ante) {
+        if (EXTINCTABLE.indexOf(name) < 0) return;
+        extinctJokers[name] = ante;
+        ownedItems.forEach(o => {
+          if (o.name != name) return;
+          if (o.to === null || o.to === undefined || o.to > ante) { o.to = ante; o.extinct = true; }
+        });
+        ownedChanged();
+      },
+      unextinguish: function(name) {
+        delete extinctJokers[name];
+        ownedItems.forEach(o => { if (o.name == name && o.extinct) { o.to = null; delete o.extinct; } });
+        ownedChanged();
+      },
+      clear: function() { ownedItems.length = 0; ownedShowman = false; Object.keys(extinctJokers).forEach(k => delete extinctJokers[k]); ownedChanged(); },
       // Perkeo fired again in shop `shop` (1-based) of ante `ante` (Blueprint / Brainstorm).
       // The copy it made is added to your owned cards as a Negative held from that shop on,
       // so it is in the pool for the next pick and rerolls the queues like any held card.
@@ -1235,6 +1336,8 @@
       if (extraTagList !== '') params.append('extraTags', extraTagList);
       const extraSixthList = Object.keys(extraSixth).filter(a => extraSixth[a] > 0).map(a => a + ':' + extraSixth[a]).join(',');
       if (extraSixthList !== '') params.append('extraSixth', extraSixthList);
+      const extraVoucherList = Object.keys(extraVouchers).filter(a => extraVouchers[a] > 0).map(a => a + ':' + extraVouchers[a]).join(',');
+      if (extraVoucherList !== '') params.append('extraVouchers', extraVoucherList);
       if (base64Unlocks != '/////////x/4') params.append('unlocks', base64Unlocks);
 
       const url = `${baseUrl}?${params.toString()}`;
@@ -1346,6 +1449,20 @@
           }
           ownedItems.forEach(o => { if (o.to !== null && o.to !== undefined && o.to == a - 1) inst.release(o.name); });
           ownedItems.forEach(o => { if (o.from == a) inst.hold(o.name); });
+          // Cavendish does not exist until Gros Michel has gone extinct, so until then it is
+          // out of every pool. Locking is idempotent here because unlock() only drops one
+          // entry, and the gate is re-evaluated every ante.
+          if (extinctJokers['Gros Michel'] !== undefined && extinctJokers['Gros Michel'] <= a) {
+            while (inst.isLocked('Cavendish')) inst.unlock('Cavendish');
+          } else if (!inst.isLocked('Cavendish')) inst.lock('Cavendish');
+          ENHANCEMENT_JOKERS.forEach(function (e) {
+            var opt = options.indexOf(e.joker);
+            var profileLocked = opt >= 0 && selectedOptions[opt] === false;
+            if (enhancementJokers[e.joker] && !profileLocked) {
+              while (inst.isLocked(e.joker)) inst.unlock(e.joker);
+            } else if (!inst.isLocked(e.joker)) inst.lock(e.joker);
+          });
+          for (const name in extinctJokers) { if (extinctJokers[name] <= a) inst.lock(name); }
           continue;
         }
 
@@ -1361,16 +1478,27 @@
         }
 
         output += "==ANTE " + a + "==\n"
+        var voucherList = [];
         if (resumingAnte(a)) {
           // Boss, voucher and tags for the saved ante were rolled when it began; the save's
           // blind_choices/blind_tags hold them, and their streams already sit past that roll.
           output += "Boss: " + resume.boss + "\n";
-          output += "Voucher: " + resume.voucher + "\n";
-          output += "Resumed from save: " + resume.label + "\n";
+          if (resume.voucher) voucherList.push(resume.voucher);
         } else {
           output += "Boss: " + inst.nextBoss(a) + "\n";
-          output += "Voucher: " + inst.nextVoucher(a) + "\n";
+          voucherList.push(inst.nextVoucher(a));
         }
+        // Replaying this ante (Hieroglyph / Petroglyph drop the ante, then its Boss is beaten
+        // again) rolls the voucher once more from the same per-ante stream. Anything bought in
+        // this ante is out of the pool by then, so lock it first - lock() only narrows the
+        // voucher pool, it does not activate the voucher's shop effects a whole ante early.
+        var extraV = extraVouchers[a] || 0;
+        if (extraV > 0) {
+          for (const name in voucherPurchases) { if (voucherPurchases[name] == a) inst.lock(name); }
+          for (let v = 0; v < extraV; v++) voucherList.push(inst.nextVoucher(a));
+        }
+        output += "Voucher: " + voucherList.join(", ") + "\n";
+        if (resumingAnte(a)) output += "Resumed from save: " + resume.label + "\n";
         var ownedNow = Object.keys(voucherPurchases).filter(n => voucherPurchases[n] <= a);
         if (ownedNow.length > 0) output += "Owned Vouchers: " + ownedNow.join(", ") + "\n";
 
@@ -1378,6 +1506,28 @@
         // of last ante. Ordered so a card released and re-acquired in the same ante stays locked.
         ownedItems.forEach(o => { if (o.to !== null && o.to !== undefined && o.to == a - 1) inst.release(o.name); });
         ownedItems.forEach(o => { if (o.from == a) inst.hold(o.name); });
+        // Cavendish does not exist until Gros Michel has gone extinct, so until then it is
+        // out of every pool. Locking is idempotent here because unlock() only drops one
+        // entry, and the gate is re-evaluated every ante.
+        if (extinctJokers['Gros Michel'] !== undefined && extinctJokers['Gros Michel'] <= a) {
+          while (inst.isLocked('Cavendish')) inst.unlock('Cavendish');
+        } else if (!inst.isLocked('Cavendish')) inst.lock('Cavendish');
+        // Enhancement Jokers: in the pool only while their enhancement is switched on. A
+        // profile lock from Modify Unlocks still wins, so this never unlocks something the
+        // profile has not.
+        ENHANCEMENT_JOKERS.forEach(function (e) {
+          var opt = options.indexOf(e.joker);
+          var profileLocked = opt >= 0 && selectedOptions[opt] === false;
+          if (enhancementJokers[e.joker] && !profileLocked) {
+            while (inst.isLocked(e.joker)) inst.unlock(e.joker);
+          } else if (!inst.isLocked(e.joker)) inst.lock(e.joker);
+        });
+        // Extinct from the ante it happened on: a permanent lock, not a release, so it never
+        // comes back into a shop or pack even with Showman held. Applied after the Cavendish
+        // gate so an extinct Cavendish stays locked.
+        for (const name in extinctJokers) { if (extinctJokers[name] <= a) inst.lock(name); }
+        // Cards the hold test is pretending you have in hand for this ante only.
+        if (analysisTempHolds && analysisTempHolds.ante == a) analysisTempHolds.names.forEach(n => inst.hold(n));
         var heldNow = ownedItems.filter(o => heldAt(o, a)).map(o => o.name);
         if (heldNow.length > 0) output += "Owned Cards: " + heldNow.join(", ") + "\n";
         var tagList = [];
@@ -1446,7 +1596,7 @@
               perkeo.push(pick + "@" + sh + "/" + t);
               pool.push(pick);
               var rec = recordedHere[t - 1];
-              if (rec && rec.name != pick) { rec.name = pick; ownedDirty = true; }
+              if (rec && rec.name != pick && !analysisQuiet) { rec.name = pick; ownedDirty = true; }
             }
           }
         }
@@ -1632,6 +1782,9 @@
 
       inst.delete();
 
+      // A hold test only wants the text; leave the page as it is.
+      if (analysisQuiet) return output;
+
       var statusEl = document.getElementById('importSaveStatus');
       if (resume && !statusEl.textContent.startsWith('Imported')) {
         statusEl.classList.remove('error');
@@ -1643,6 +1796,7 @@
       // Update output box with analysis result
       outputBox.value = output;
       document.dispatchEvent(new Event('analysisComplete'));
+      return output;
     }
 
     window.addEventListener('DOMContentLoaded', () => {
@@ -1666,6 +1820,14 @@
       const urlExtraPacks = urlParams.get('extraPacks');
       const urlExtraTags = urlParams.get('extraTags');
       const urlExtraSixth = urlParams.get('extraSixth');
+      const urlExtraVouchers = urlParams.get('extraVouchers');
+
+      if (urlExtraVouchers) {
+        urlExtraVouchers.split(',').forEach(entry => {
+          const [a, n] = entry.split(':').map(x => parseInt(x, 10));
+          if (a >= 1 && n >= 1) extraVouchers[a] = Math.min(n, 200);
+        });
+      }
 
       if (urlExtraSixth) {
         urlExtraSixth.split(',').forEach(entry => {
