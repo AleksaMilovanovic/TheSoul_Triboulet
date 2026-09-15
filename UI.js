@@ -3382,12 +3382,21 @@ function searchAndHighlight() {
             }
             const spots = (lines) => lines.map((l, i) => nameOf(l) === target ? i + 1 : 0).filter(Boolean);
             const before = spots(ht.queue(anteNum, []));
-            const after = spots(ht.queue(anteNum, state.holds));
+            // Each card is bought the first time the shop offers it, and only leaves the pool
+            // from the next frame: pretending you hold it earlier than you could predicts a
+            // queue you can never reach.
+            const run = ht.buyFirstSeen(anteNum, state.holds);
+            const after = spots(run.queue);
             const delta = after.length - before.length;
             const at = (list) => list.length ? ' (card' + (list.length === 1 ? ' ' : 's ') + list.join(', ') + ')' : '';
             const parts = [target + ' in this ante\u2019s queue: ' + before.length + at(before)
-                + ' \u2192 ' + after.length + at(after) + ' while holding ' + state.holds.join(', ') + '.'];
+                + ' \u2192 ' + after.length + at(after) + '.'];
             parts.push(delta > 0 ? '+' + delta + ' extra.' : delta < 0 ? delta + ' fewer.' : 'No change.');
+            if (run.schedule.length) {
+                parts.push('Bought: ' + run.schedule.map(h => h.name + ' at card ' + h.boughtSlot
+                    + ' (frame ' + h.boughtFrame + ', out of the pool from card ' + h.fromSlot + ')').join('; ') + '.');
+            }
+            if (run.neverOffered.length) parts.push('Never offered this ante: ' + run.neverOffered.join(', ') + '.');
             if (os && os.showman) parts.push('Showman is held, so nothing rerolls around held cards \u2014 untick it to see an effect.');
             result.className = 'modifier holdResult';
             result.textContent = parts.join(' ');
