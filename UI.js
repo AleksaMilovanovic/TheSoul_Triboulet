@@ -526,6 +526,27 @@ function searchAndHighlight() {
         font-size: 11px;
         padding: 2px 7px;
     }
+    .windowHit {
+        box-shadow: inset 0 0 0 2px #7fd3ff;
+    }
+    .windowSpan {
+        background-color: rgba(127, 211, 255, 0.10);
+    }
+    .editionRow {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 6px;
+    }
+    .editionList {
+        flex-basis: 100%;
+        color: #cccccc;
+        white-space: normal;
+    }
+    .editionList b {
+        color: #ffd479;
+    }
     .enhRow {
         display: flex;
         align-items: center;
@@ -1900,6 +1921,9 @@ function searchAndHighlight() {
     // it is a scratch question, not part of the run.
     const holdTestState = new Map();
 
+    // Densest-window settings per ante, kept across re-renders.
+    const windowFinderState = new Map();
+
     function makeVoucherTile(name) {
         const tile = document.createElement('div');
         tile.className = 'voucherTile';
@@ -1912,6 +1936,23 @@ function searchAndHighlight() {
         tile.appendChild(nameElement);
 
         return tile;
+    }
+
+    // Rarity of a Joker straight from the engine's pools, or null for anything else.
+    const RARITIES = ['Common', 'Uncommon', 'Rare', 'Legendary'];
+    let rarityPools = null;
+    function rarityOf(name) {
+        if (!rarityPools) {
+            if (typeof Immolate === 'undefined' || !Immolate.COMMON_JOKERS) return null;
+            const vec = (v) => { const out = []; for (let i = 0; i < v.size(); i++) out.push(v.get(i)); return out; };
+            rarityPools = {
+                Common: new Set(vec(Immolate.COMMON_JOKERS)),
+                Uncommon: new Set(vec(Immolate.UNCOMMON_JOKERS)),
+                Rare: new Set(vec(Immolate.RARE_JOKERS)),
+                Legendary: new Set(vec(Immolate.LEGENDARY_JOKERS)),
+            };
+        }
+        return RARITIES.find(r => rarityPools[r].has(name)) || null;
     }
 
     // Build one card tile (sprite + name + modifiers + stickers) from a queue line like "3) Foil Blueprint"
@@ -2467,6 +2508,38 @@ function searchAndHighlight() {
                         body.appendChild(enhRow);
                     }
 
+                    // Editions held, and every card that is NOT Negative. With hundreds of
+                    // Negative Jokers in the row a plain one is easy to lose; this names them
+                    // and gives the slot each sits in, counting in acquisition order.
+                    const allHeld = os.items.filter(o => os.heldAt(o, anteNum));
+                    if (allHeld.length > 0) {
+                        const edRow = document.createElement('div');
+                        edRow.className = 'editionRow';
+                        const counts = new Map();
+                        allHeld.forEach(o => {
+                            const ed = o.edition || (o.negative ? 'Negative' : 'No edition');
+                            counts.set(ed, (counts.get(ed) || 0) + 1);
+                        });
+                        const summary = document.createElement('span');
+                        summary.className = 'jumpLabel';
+                        summary.textContent = 'Editions: ' + [...counts.entries()].map(([k, v]) => k + ' \u00D7' + v).join(' \u00B7 ');
+                        edRow.appendChild(summary);
+
+                        const plain = allHeld.map((o, i) => ({ o: o, slot: i + 1 }))
+                            .filter(x => !(x.o.edition === 'Negative' || x.o.negative));
+                        const list = document.createElement('div');
+                        list.className = 'modifier editionList';
+                        if (plain.length === 0) {
+                            list.textContent = 'Every held card is Negative.';
+                        } else {
+                            list.innerHTML = 'Not Negative (' + plain.length + '), by slot: '
+                                + plain.map(x => '<b>#' + x.slot + '</b> ' + x.o.name
+                                    + (x.o.edition ? ' (' + x.o.edition + ')' : '')).join(', ');
+                        }
+                        edRow.appendChild(list);
+                        body.appendChild(edRow);
+                    }
+
                     // One tile per distinct card, with a copy count. Actions apply to one copy
                     // at a time: the most recently acquired copy that is still open.
                     const grid = document.createElement('div');
@@ -2890,8 +2963,42 @@ function searchAndHighlight() {
                     refresh();
                 };
                 appendJumpBar(body, scrollable, tiles, { frameSize: shopSlots, reveal: revealSeen });
+                appendWindowFinder(body, anteNum, tiles, queue, scrollable);
                 body.appendChild(scrollable);
                 attachDragScroll(scrollable);
+
+                // Roll further down this ante's shop stream. Nothing already listed changes;
+                // the queue just runs on past frames x slots.
+                const qs = window.shopQueueState;
+                if (qs) {
+                    const moreRow = document.createElement('div');
+                    moreRow.className = 'packControls';
+                    const countInput = document.createElement('input');
+                    countInput.type = 'number'; countInput.min = 1; countInput.max = 2000;
+                    countInput.value = 40; countInput.className = 'jumpInput';
+                    countInput.title = 'How many more cards to roll';
+                    remember(countInput, 'shopMore:' + anteNum);
+                    const moreBtn = document.createElement('button');
+                    moreBtn.className = 'smallButton';
+                    moreBtn.textContent = 'Extend queue';
+                    moreBtn.title = 'Roll this many more cards at the end of the queue';
+                    moreBtn.addEventListener('click', () => qs.more(anteNum, countInput.value));
+                    moreRow.appendChild(countInput);
+                    moreRow.appendChild(moreBtn);
+                    const extraNow = qs.extra[anteNum] || 0;
+                    if (extraNow > 0) {
+                        const note = document.createElement('span');
+                        note.className = 'modifier';
+                        note.textContent = '+' + extraNow + ' extra card' + (extraNow === 1 ? '' : 's');
+                        moreRow.appendChild(note);
+                        const resetBtn = document.createElement('button');
+                        resetBtn.className = 'smallButton';
+                        resetBtn.textContent = 'Reset';
+                        resetBtn.addEventListener('click', () => qs.reset(anteNum));
+                        moreRow.appendChild(resetBtn);
+                    }
+                    body.appendChild(moreRow);
+                }
                 refresh();
             });
 
@@ -3192,11 +3299,14 @@ function searchAndHighlight() {
         { name: 'Flush Five',       find: (p) => bySuit(p, (q) => handOfAKind(q, 5)) },
     ];
 
-    function findFirstHand(cards, handName) {
+    // `skip` is a set of card indices to leave out of the search - the cards an earlier
+    // answer used, when you want the same hand out of different cards.
+    function findFirstHand(cards, handName, skip) {
         const spec = POKER_HANDS.find(h => h.name === handName);
         if (!spec) return null;
         const pool = [];
         for (let i = 0; i < cards.length; i++) {
+            if (skip && skip.has(i)) continue;
             const parsed = parseStandardCardName(cards[i].name);
             // A Stone card has no rank and no suit, so it can never be part of the hand.
             if (parsed && !parsed.modifiers.includes('Stone') && RANK_VALUE[parsed.rank]) {
@@ -3211,8 +3321,9 @@ function searchAndHighlight() {
     // Cheapest route to draw position `at`: hold the cards the hand needs, throw the rest
     // five at a time. Returns the number of discards, or null when the hand fills up with
     // cards it cannot afford to throw.
-    function discardsToReach(at, needed, handSize) {
+    function discardsToReach(at, needed, handSize, alsoKeep) {
         const keep = new Set(needed);
+        (alsoKeep || []).forEach(i => keep.add(i));
         let drawn = Math.min(handSize, at);
         let held = new Set();
         for (let i = 0; i < drawn; i++) held.add(i);
@@ -3252,37 +3363,73 @@ function searchAndHighlight() {
         result.className = 'modifier handResult';
 
         const clear = () => tiles.forEach(t => t.classList.remove('handHit'));
-        const run = () => {
+        // Cards spent by the answers already shown, so "Next" has to build the hand out of
+        // something else. ORDINALS[n] names which answer you are looking at.
+        const ORDINALS = ['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh', 'Eighth', 'Ninth', 'Tenth'];
+        let used = [];   // indices spent by earlier answers
+        let nth = 0;
+
+        const run = (again) => {
             clear();
-            const hit = findFirstHand(cards, sel.value);
+            if (!again) { used = []; nth = 0; }
+            const skip = new Set(used);
+            const hit = findFirstHand(cards, sel.value, skip);
             if (!hit) {
                 result.className = 'modifier handResult noHit';
-                result.textContent = 'No ' + sel.value + ' anywhere in this round\u2019s ' + cards.length + ' cards.';
+                result.textContent = again
+                    ? 'No further ' + sel.value + ' once cards ' + used.map(i => i + 1).sort((a, b) => a - b).join(', ') + ' are set aside.'
+                    : 'No ' + sel.value + ' anywhere in this round\u2019s ' + cards.length + ' cards.';
+                nextBtn.disabled = true;
                 return;
             }
+            nth++;
             result.className = 'modifier handResult';
             hit.indices.forEach(i => tiles[i].classList.add('handHit'));
             scrollTileIntoView(scrollable, tiles[hit.indices[hit.indices.length - 1]]);
-            const at = ['First ' + sel.value + ' completes at card ' + hit.at
+            const ord = ORDINALS[nth - 1] || (nth + 'th');
+            const at = [ord + ' ' + sel.value + ' completes at card ' + hit.at
                 + ' (position' + (hit.indices.length === 1 ? ' ' : 's ') + hit.indices.map(i => i + 1).join(', ') + ').'];
+            if (used.length) at.push('Leaving card' + (used.length === 1 ? ' ' : 's ')
+                + used.map(i => i + 1).sort((a, b) => a - b).join(', ') + ' free for something else.');
             if (hit.at <= handSize) {
                 at.push('Already in the opening hand.');
             } else {
+                // The plain answer first: what this hand alone costs.
                 const d = discardsToReach(hit.at, hit.indices, handSize);
                 at.push(d === null
                     ? 'Not reachable by discarding: the hand fills with cards it has to keep.'
                     : d + ' discard' + (d === 1 ? '' : 's') + ' to get there, keeping those cards and throwing the rest'
                         + (d > 3 ? ' \u2014 more than the usual 3.' : '.'));
+                // Then whether you could still be sitting on the earlier answer at the time.
+                if (used.length) {
+                    const both = discardsToReach(hit.at, hit.indices, handSize, used);
+                    if (both === null) {
+                        at.push('Holding the earlier cards as well needs ' + (used.length + hit.indices.length)
+                            + ' slots against a hand of ' + handSize + ', so you cannot keep both.');
+                    } else if (both !== d) {
+                        at.push(both + ' discard' + (both === 1 ? '' : 's') + ' if you hold the earlier cards too.');
+                    }
+                }
             }
             result.textContent = at.join(' ');
+            used = used.concat(hit.indices);
+            nextBtn.disabled = false;
         };
 
         const btn = document.createElement('button');
         btn.className = 'smallButton';
         btn.textContent = 'Find';
-        btn.addEventListener('click', run);
+        btn.title = 'The earliest one in this round';
+        btn.addEventListener('click', () => run(false));
         bar.appendChild(btn);
-        sel.addEventListener('change', () => { clear(); result.textContent = ''; });
+        const nextBtn = document.createElement('button');
+        nextBtn.className = 'smallButton';
+        nextBtn.textContent = 'Next';
+        nextBtn.title = 'The same hand again, out of different cards: everything an earlier answer used is set aside';
+        nextBtn.disabled = true;
+        nextBtn.addEventListener('click', () => run(true));
+        bar.appendChild(nextBtn);
+        sel.addEventListener('change', () => { clear(); result.textContent = ''; used = []; nth = 0; nextBtn.disabled = true; });
         bar.appendChild(result);
         parent.appendChild(bar);
         return bar;
@@ -3411,6 +3558,131 @@ function searchAndHighlight() {
         bar.appendChild(result);
         renderChips();
         stale();
+        parent.appendChild(bar);
+        return bar;
+    }
+
+    // ---- Densest window in the shop queue ------------------------------------
+    // "Between cards 230 and 340, which run of 40 holds the most Rare Jokers?" Slides a
+    // window of the given length over the range and keeps the best one, so you can see where
+    // it is worth spending rerolls rather than reading the whole queue.
+    function appendWindowFinder(parent, anteNum, tiles, lines, scrollable) {
+        const state = windowFinderState.get(anteNum) || { from: 1, to: Math.min(lines.length, 200), len: 40, rarity: 'Rare', names: [] };
+        windowFinderState.set(anteNum, state);
+        state.to = Math.min(state.to || lines.length, lines.length);
+
+        const bar = document.createElement('div');
+        bar.className = 'jumpBar windowFinder';
+        const addLabel = (text) => { const el = document.createElement('span'); el.className = 'jumpLabel'; el.textContent = text; bar.appendChild(el); };
+        const addButton = (text, title, onClick, cls) => {
+            const b = document.createElement('button');
+            b.className = 'smallButton' + (cls ? ' ' + cls : '');
+            b.textContent = text; b.title = title;
+            b.addEventListener('click', onClick);
+            bar.appendChild(b); return b;
+        };
+        const num = (value, title, onChange) => {
+            const el = document.createElement('input');
+            el.type = 'number'; el.min = 1; el.max = lines.length;
+            el.value = value; el.className = 'jumpInput'; el.title = title;
+            el.addEventListener('change', () => onChange(parseInt(el.value, 10) || 1));
+            bar.appendChild(el); return el;
+        };
+
+        const result = document.createElement('div');
+        result.className = 'modifier holdResult';
+        const chips = document.createElement('span');
+        chips.className = 'holdChips';
+
+        addLabel('Densest window: cards');
+        num(state.from, 'First card of the range', v => { state.from = v; });
+        addLabel('to');
+        num(state.to, 'Last card of the range', v => { state.to = v; });
+        addLabel('window');
+        num(state.len, 'How many cards wide the window is', v => { state.len = v; });
+
+        addLabel('of');
+        const raritySel = document.createElement('select');
+        RARITIES.forEach(r => { const o = document.createElement('option'); o.value = r; o.textContent = r; raritySel.appendChild(o); });
+        raritySel.value = state.rarity;
+        raritySel.title = 'Counted when no specific Jokers are listed';
+        raritySel.addEventListener('change', () => { state.rarity = raritySel.value; });
+        bar.appendChild(raritySel);
+
+        addLabel('or');
+        const nameInput = makeNameInput('specific Joker');
+        bar.appendChild(nameInput);
+        const renderChips = () => {
+            chips.innerHTML = '';
+            state.names.forEach((n, i) => {
+                const chip = document.createElement('button');
+                chip.className = 'smallButton holdChip';
+                chip.textContent = n + ' \u00D7';
+                chip.title = 'Stop looking for ' + n;
+                chip.addEventListener('click', () => { state.names.splice(i, 1); renderChips(); });
+                chips.appendChild(chip);
+            });
+        };
+        const addName = () => {
+            const n = nameInput.value.trim();
+            if (determineItemType(n) === 'unknown') { nameInput.classList.add('badName'); return; }
+            nameInput.classList.remove('badName');
+            if (state.names.indexOf(n) < 0) state.names.push(n);
+            nameInput.value = ''; renderChips();
+        };
+        nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addName(); } });
+        addButton('Add', 'Count this Joker instead of a whole rarity', addName);
+        bar.appendChild(chips);
+
+        const nameOf = (line) => String(line).replace(/^\d+\)/, '').trim()
+            .replace(/^(Eternal |Perishable |Rental )+/, '')
+            .replace(/^(Foil|Holographic|Polychrome|Negative) /, '');
+        const clear = () => tiles.forEach(t => t.classList.remove('windowHit', 'windowSpan'));
+
+        const find = () => {
+            clear();
+            const from = Math.max(1, Math.min(lines.length, state.from));
+            const to = Math.max(from, Math.min(lines.length, state.to));
+            const len = Math.max(1, Math.min(to - from + 1, state.len));
+            const wanted = state.names.slice();
+            const matches = [];
+            for (let i = from - 1; i <= to - 1; i++) {
+                const n = nameOf(lines[i]);
+                const hit = wanted.length ? wanted.indexOf(n) >= 0 : rarityOf(n) === raritySel.value;
+                if (hit) matches.push(i + 1);
+            }
+            const label = (n) => wanted.length ? wanted.join(' / ')
+                : raritySel.value + ' Joker' + (n === 1 ? '' : 's');
+            if (matches.length === 0) {
+                result.className = 'modifier holdResult noHit';
+                result.textContent = 'No ' + label(0) + ' between cards ' + from + ' and ' + to + '.';
+                return;
+            }
+            // Best window: slide the left edge over every start that still fits in the range.
+            let best = { start: from, count: 0 };
+            for (let start = from; start + len - 1 <= to; start++) {
+                const end = start + len - 1;
+                const count = matches.filter(m => m >= start && m <= end).length;
+                if (count > best.count) best = { start: start, count: count };
+            }
+            const end = best.start + len - 1;
+            const inWindow = matches.filter(m => m >= best.start && m <= end);
+            for (let i = best.start; i <= end; i++) if (tiles[i - 1]) tiles[i - 1].classList.add('windowSpan');
+            inWindow.forEach(m => { if (tiles[m - 1]) tiles[m - 1].classList.add('windowHit'); });
+            scrollTileIntoView(scrollable, tiles[best.start - 1]);
+            result.className = 'modifier holdResult';
+            result.textContent = 'Best ' + len + '-card window: cards ' + best.start + '\u2013' + end
+                + ' with ' + best.count + ' ' + label(best.count) + ' (at ' + inWindow.join(', ') + '). '
+                + matches.length + ' ' + label(matches.length) + ' in cards ' + from + '\u2013' + to + ' altogether.';
+        };
+
+        addButton('Find', 'Search the range for the densest window', find);
+        addButton('Clear', 'Drop the highlight and the Joker list', () => {
+            clear(); state.names.length = 0; renderChips();
+            result.textContent = ''; result.className = 'modifier holdResult';
+        });
+        bar.appendChild(result);
+        renderChips();
         parent.appendChild(bar);
         return bar;
     }
