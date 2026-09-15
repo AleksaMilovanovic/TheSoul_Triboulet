@@ -284,6 +284,9 @@
         <label for="seed">Seed:</label>
         <input type="text" id="seed" maxlength="8" pattern="[A-Z1-9]{1,8}" required>
         <br>
+        <label for="minAnte">Min Ante:</label>
+        <input type="number" id="minAnte" min="1" max="999" value="1" required>
+        <br>
         <label for="ante">Max Ante:</label>
         <input type="number" id="ante" min="1" max="999" value="38" required>
         <br>
@@ -626,6 +629,14 @@
       more: function(ante) { extraPacks[ante] = (extraPacks[ante] || 0) + 1; performAnalysis(); },
       reset: function(ante) { delete extraPacks[ante]; performAnalysis(); }
     };
+    // Extra shop queue cards revealed per ante, beyond frames x slots. Rolling more cards
+    // only reads further down that ante's shop stream, so it changes nothing already shown.
+    var extraShopCards = {};
+    window.shopQueueState = {
+      extra: extraShopCards,
+      more: function(ante, n) { extraShopCards[ante] = (extraShopCards[ante] || 0) + Math.max(1, Math.min(2000, parseInt(n, 10) || 0)); performAnalysis(); },
+      reset: function(ante) { delete extraShopCards[ante]; performAnalysis(); }
+    };
     // Extra tags revealed per ante (ante -> count beyond the game's default 2).
     var extraTags = {};
     window.tagState = {
@@ -887,6 +898,11 @@
           }
           i++; return out;
         }
+        // Lua writes non-finite numbers as bare words, and a long enough run overflows a
+        // stat into one of them. Longest prefix first so "-inf" is not read as "-" + "inf".
+        for (const [lit, v] of [['-inf', -Infinity], ['inf', Infinity], ['-nan', NaN], ['nan', NaN]]) {
+          if (t.startsWith(lit, i)) { i += lit.length; return v; }
+        }
         const m = /^-?\d+(\.\d+)?([eE][-+]?\d+)?/.exec(t.slice(i, i + 40));
         if (m) { i += m[0].length; return Number(m[0]); }
         for (const [lit, v] of [['true', true], ['false', false], ['nil', null]]) if (t.startsWith(lit, i)) { i += lit.length; return v; }
@@ -970,8 +986,15 @@
         loadOwnedState(seed, deckName);
         ownedItems.length = 0; ownedSeq = 0;
         const addOwned = (c, extra) => { ownedSeq++; const name = SAVE_NAME_FIX[c.ability.name] || c.ability.name; ownedItems.push(Object.assign({ id: 'o' + ownedSeq, name: name, from: ante, to: null, pos: 1 }, extra || {})); return name; };
-        const jokers = cardsOf(save, 'jokers').map(c => addOwned(c, c.edition && c.edition.type === 'negative' ? { negative: true } : null));
-        const consumables = cardsOf(save, 'consumeables').map(c => addOwned(c, c.edition && c.edition.type === 'negative' ? { negative: true } : null));
+        // Keep the edition the save records, not just whether it is Negative: with hundreds of
+        // Jokers held, which ones are NOT Negative is the thing that is hard to spot by eye.
+        const editionOf = (c) => {
+          const ed = c.edition && SAVE_EDITIONS[c.edition.type];
+          if (!ed) return null;
+          return ed === 'Negative' ? { negative: true, edition: 'Negative' } : { edition: ed };
+        };
+        const jokers = cardsOf(save, 'jokers').map(c => addOwned(c, editionOf(c)));
+        const consumables = cardsOf(save, 'consumeables').map(c => addOwned(c, editionOf(c)));
         ownedShowman = jokers.includes('Showman');
         saveOwnedState();
 
@@ -1320,6 +1343,7 @@
     instantAnalysis = false;
 
     const anteInput = document.getElementById('ante');
+    const minAnteInput = document.getElementById('minAnte');
     const framesPerAnteInput = document.getElementById('framesPerAnte');
     GENERATORS.forEach(g => { g.el = document.getElementById(g.input); });
     const deckSelect = document.getElementById('deck');
@@ -1377,6 +1401,9 @@
       if (extraSixthList !== '') params.append('extraSixth', extraSixthList);
       const extraVoucherList = Object.keys(extraVouchers).filter(a => extraVouchers[a] > 0).map(a => a + ':' + extraVouchers[a]).join(',');
       if (extraVoucherList !== '') params.append('extraVouchers', extraVoucherList);
+      const extraShopList = Object.keys(extraShopCards).filter(a => extraShopCards[a] > 0).map(a => a + ':' + extraShopCards[a]).join(',');
+      if (extraShopList !== '') params.append('extraShopCards', extraShopList);
+      if ((parseInt(document.getElementById('minAnte').value, 10) || 1) > 1) params.append('minAnte', document.getElementById('minAnte').value);
       if (base64Unlocks != '/////////x/4') params.append('unlocks', base64Unlocks);
 
       const url = `${baseUrl}?${params.toString()}`;
@@ -1412,6 +1439,9 @@
     function performAnalysis() {
       // Get input values
       const ante = parseInt(anteInput.value, 10);
+      // Antes below this are still rolled - every stream has to advance through them - but
+      // are dropped from the output rather than shown.
+      const minAnte = Math.max(1, Math.min(ante, parseInt(minAnteInput.value, 10) || 1));
       const framesPerAnte = framesPerAnteInput.value.split(',').map(Number);
       const clampCount = (v) => Math.max(0, Math.min(999, parseInt(v, 10) || 0));
       GENERATORS.forEach(g => { g.count = clampCount(g.el.value); });
@@ -1477,6 +1507,7 @@
         }
       });
       for (let a = 1; a <= ante; a++) {
+        var anteOutputStart = output.length;
         inst.initUnlocks(a, false);
         if (a < firstAnte) {
           // Antes before the save: apply their permanent state (vouchers, unlocks) but roll
@@ -1502,6 +1533,7 @@
             } else if (!inst.isLocked(e.joker)) inst.lock(e.joker);
           });
           for (const name in extinctJokers) { if (extinctJokers[name] <= a) inst.lock(name); }
+          if (a < minAnte) output = output.slice(0, anteOutputStart);
           continue;
         }
 
@@ -1704,7 +1736,7 @@
         // A voucher counts once bought in this ante or earlier, or granted by the deck.
         var ownedAt = (name) => (DECK_VOUCHERS[deck] || []).includes(name) || (voucherPurchases[name] !== undefined && voucherPurchases[name] <= a);
         var shopSlots = 2 + (ownedAt("Overstock") ? 1 : 0) + (ownedAt("Overstock Plus") ? 1 : 0);
-        var shopCards = (framesPerAnte[a-1] || 0) * shopSlots;
+        var shopCards = (framesPerAnte[a-1] || 0) * shopSlots + (extraShopCards[a] || 0);
 
         output += "Shop Queue (" + shopSlots + " cards per frame): \n";
         var qStart = 1;
@@ -1821,6 +1853,7 @@
         }
 
         output += "\n";
+        if (a < minAnte) output = output.slice(0, anteOutputStart);
       };
 
       inst.delete();
@@ -1864,6 +1897,16 @@
       const urlExtraTags = urlParams.get('extraTags');
       const urlExtraSixth = urlParams.get('extraSixth');
       const urlExtraVouchers = urlParams.get('extraVouchers');
+      const urlExtraShop = urlParams.get('extraShopCards');
+      const urlMinAnte = urlParams.get('minAnte');
+
+      if (urlMinAnte) document.getElementById('minAnte').value = Math.max(1, Math.min(999, parseInt(urlMinAnte, 10) || 1));
+      if (urlExtraShop) {
+        urlExtraShop.split(',').forEach(entry => {
+          const [a, n] = entry.split(':').map(x => parseInt(x, 10));
+          if (a >= 1 && n >= 1) extraShopCards[a] = Math.min(n, 20000);
+        });
+      }
 
       if (urlExtraVouchers) {
         urlExtraVouchers.split(',').forEach(entry => {
