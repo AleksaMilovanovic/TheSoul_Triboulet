@@ -3563,11 +3563,13 @@ function searchAndHighlight() {
     }
 
     // ---- Densest window in the shop queue ------------------------------------
-    // "Between cards 230 and 340, which run of 40 holds the most Rare Jokers?" Slides a
-    // window of the given length over the range and keeps the best one, so you can see where
-    // it is worth spending rerolls rather than reading the whole queue.
+    // "Between cards 230 and 340, which run of 10 Jokers holds the most Rare ones?" The
+    // window is measured in Jokers, not queue slots: Tarots, Planets, Spectrals and playing
+    // cards sit in the queue but are not what you are shopping for, so they do not use up
+    // the window. A run of 3 Jokers spread over 7 cards beats a denser-looking stretch that
+    // only reaches 3 of the rarity you want by spending 4 Joker slots on it.
     function appendWindowFinder(parent, anteNum, tiles, lines, scrollable) {
-        const state = windowFinderState.get(anteNum) || { from: 1, to: Math.min(lines.length, 200), len: 40, rarity: 'Rare', names: [] };
+        const state = windowFinderState.get(anteNum) || { from: 1, to: Math.min(lines.length, 200), len: 10, rarity: 'Rare', names: [] };
         windowFinderState.set(anteNum, state);
         state.to = Math.min(state.to || lines.length, lines.length);
 
@@ -3598,8 +3600,9 @@ function searchAndHighlight() {
         num(state.from, 'First card of the range', v => { state.from = v; });
         addLabel('to');
         num(state.to, 'Last card of the range', v => { state.to = v; });
-        addLabel('window');
-        num(state.len, 'How many cards wide the window is', v => { state.len = v; });
+        addLabel('window of');
+        num(state.len, 'How many Jokers wide the window is. Tarots, Planets, Spectrals and playing cards in between do not count against it.', v => { state.len = v; });
+        addLabel('jokers');
 
         addLabel('of');
         const raritySel = document.createElement('select');
@@ -3643,37 +3646,53 @@ function searchAndHighlight() {
             clear();
             const from = Math.max(1, Math.min(lines.length, state.from));
             const to = Math.max(from, Math.min(lines.length, state.to));
-            const len = Math.max(1, Math.min(to - from + 1, state.len));
             const wanted = state.names.slice();
-            const matches = [];
-            for (let i = from - 1; i <= to - 1; i++) {
-                const n = nameOf(lines[i]);
-                const hit = wanted.length ? wanted.indexOf(n) >= 0 : rarityOf(n) === raritySel.value;
-                if (hit) matches.push(i + 1);
-            }
             const label = (n) => wanted.length ? wanted.join(' / ')
                 : raritySel.value + ' Joker' + (n === 1 ? '' : 's');
-            if (matches.length === 0) {
+
+            // Every Joker in the range, in queue order. Only these use up the window.
+            const jokers = [];
+            for (let i = from - 1; i <= to - 1; i++) {
+                const n = nameOf(lines[i]);
+                if (rarityOf(n) === null) continue;   // Tarot, Planet, Spectral, playing card
+                jokers.push({ pos: i + 1, hit: wanted.length ? wanted.indexOf(n) >= 0 : rarityOf(n) === raritySel.value });
+            }
+            if (jokers.length === 0) {
                 result.className = 'modifier holdResult noHit';
-                result.textContent = 'No ' + label(0) + ' between cards ' + from + ' and ' + to + '.';
+                result.textContent = 'No Jokers at all between cards ' + from + ' and ' + to + '.';
                 return;
             }
-            // Best window: slide the left edge over every start that still fits in the range.
-            let best = { start: from, count: 0 };
-            for (let start = from; start + len - 1 <= to; start++) {
-                const end = start + len - 1;
-                const count = matches.filter(m => m >= start && m <= end).length;
-                if (count > best.count) best = { start: start, count: count };
+            const totalHits = jokers.filter(j => j.hit).length;
+            if (totalHits === 0) {
+                result.className = 'modifier holdResult noHit';
+                result.textContent = 'No ' + label(0) + ' among the ' + jokers.length
+                    + ' Jokers between cards ' + from + ' and ' + to + '.';
+                return;
             }
-            const end = best.start + len - 1;
-            const inWindow = matches.filter(m => m >= best.start && m <= end);
-            for (let i = best.start; i <= end; i++) if (tiles[i - 1]) tiles[i - 1].classList.add('windowSpan');
+
+            // Slide a window of `len` consecutive Jokers, ignoring everything between them.
+            const len = Math.max(1, Math.min(jokers.length, state.len));
+            let best = { at: 0, count: -1 };
+            for (let i = 0; i + len <= jokers.length; i++) {
+                let count = 0;
+                for (let k = i; k < i + len; k++) if (jokers[k].hit) count++;
+                if (count > best.count) best = { at: i, count: count };
+            }
+            const run = jokers.slice(best.at, best.at + len);
+            const startCard = run[0].pos, endCard = run[run.length - 1].pos;
+            const inWindow = run.filter(j => j.hit).map(j => j.pos);
+            for (let i = startCard; i <= endCard; i++) if (tiles[i - 1]) tiles[i - 1].classList.add('windowSpan');
             inWindow.forEach(m => { if (tiles[m - 1]) tiles[m - 1].classList.add('windowHit'); });
-            scrollTileIntoView(scrollable, tiles[best.start - 1]);
+            scrollTileIntoView(scrollable, tiles[startCard - 1]);
+
             result.className = 'modifier holdResult';
-            result.textContent = 'Best ' + len + '-card window: cards ' + best.start + '\u2013' + end
-                + ' with ' + best.count + ' ' + label(best.count) + ' (at ' + inWindow.join(', ') + '). '
-                + matches.length + ' ' + label(matches.length) + ' in cards ' + from + '\u2013' + to + ' altogether.';
+            const clamped = len !== state.len ? ' (only ' + len + ' Jokers in range)' : '';
+            result.textContent = 'Best run of ' + len + ' Joker' + (len === 1 ? '' : 's') + clamped
+                + ': cards ' + startCard + '\u2013' + endCard
+                + ' (' + (endCard - startCard + 1) + ' cards) with ' + best.count + ' ' + label(best.count)
+                + ' (at ' + inWindow.join(', ') + '). '
+                + totalHits + ' ' + label(totalHits) + ' among ' + jokers.length
+                + ' Jokers in cards ' + from + '\u2013' + to + ' altogether.';
         };
 
         addButton('Find', 'Search the range for the densest window', find);
