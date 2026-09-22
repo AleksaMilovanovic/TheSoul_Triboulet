@@ -707,6 +707,7 @@
     const PERKEO_PULL_PER_TRIGGER = true;
     var deckOps = [];        // { type:'add', id, name, ante, round, seq } | { type:'remove', target, ante, round, seq } | { type:'modify', target, name, was, ante, round, seq }
     var deckRounds = {};     // ante -> [{ hand, cards: [{ id, name }] }], rebuilt by performAnalysis
+    var deckPackHands = {};  // ante -> { [pack index as listed]: { shop, hand, first, second } } for Arcana / Spectral packs
     var extraRounds = {};    // ante -> extra rounds revealed (replaying an ante after Hieroglyph/Petroglyph)
     var deckHandAdjust = 0;  // manual hand-size tweak (Juggler, Stuntman, Turtle Bean, ...)
     var deckSeq = 0;
@@ -742,19 +743,52 @@
     // (in acquisition order, which is what sort_id follows), minus removed ones, with any
     // modify ops applied in place. Sealing or enhancing a card does not re-create it, so it
     // keeps its sort_id and its place in this list; only adds and removes move things.
-    function deckAt(startCards, a, r) {
+    // Removes and modifies can take effect from a later point (ra, rr) than adds: the shop
+    // after a round has already lost what that round destroyed, but not gained what it sells.
+    // In that shop view, changes made in the shop itself (inShop ops at ra/rr) are left out.
+    function deckAt(startCards, a, r, ra, rr) {
+      var shopView = ra !== undefined;
+      if (!shopView) { ra = a; rr = r; }
       const eff = (op) => op.ante < a || (op.ante == a && op.round <= r);
+      const effLate = (op) => (op.ante < ra || (op.ante == ra && op.round <= rr))
+        && !(shopView && op.inShop && op.ante == ra && op.round == rr);
       var cards = startCards.map((code, i) => ({ id: 's' + i, name: cardCodeToName(code) }));
       deckOps.filter(op => op.type == 'add' && eff(op))
         .sort((x, y) => (x.ante - y.ante) || (x.round - y.round) || (x.seq - y.seq))
         .forEach(op => cards.push({ id: op.id, name: op.name }));
       var modified = {};
-      deckOps.filter(op => op.type == 'modify' && eff(op))
+      deckOps.filter(op => op.type == 'modify' && effLate(op))
         .sort((x, y) => (x.ante - y.ante) || (x.round - y.round) || (x.seq - y.seq))
         .forEach(op => { modified[op.target] = op.name; });
-      var removed = new Set(deckOps.filter(op => op.type == 'remove' && eff(op)).map(op => op.target));
+      var removed = new Set(deckOps.filter(op => op.type == 'remove' && effLate(op)).map(op => op.target));
       return cards.filter(c => !removed.has(c.id))
         .map(c => modified[c.id] !== undefined ? { id: c.id, name: modified[c.id] } : c);
+    }
+
+    // Arcana and Spectral packs deal a hand straight off the deck (Card:open ->
+    // draw_from_deck_to_hand, no shuffle of its own). The deck was last shuffled at cash out:
+    // G.FUNCS.cash_out calls G.deck:shuffle('cashout' .. ante), one pull per shop visit, and
+    // the boss's cash out already sees the next ante (end_round eases the ante first). So
+    // shop visit s of ante a is pull s of 'cashout'+a, the same sort-then-Fisher-Yates as a
+    // blind. The engine only shuffles off 'nr'+ante, so the 'nr' stream is borrowed: loaded
+    // with the cashout stream's state, pulled once, and put back.
+    function pseudohash(s) {
+      var num = 1;
+      for (let i = s.length; i > 0; i--) num = (1.1239285023 / num * s.charCodeAt(i - 1) * 3.141592653589793116 + 3.141592653589793116 * i) % 1;
+      return num;
+    }
+    function cashoutShuffle(inst, a, size) {
+      var key = "cashout" + a, nrKey = "nr" + a;
+      var savedNr = inst.peekNode(nrKey);
+      var cur = inst.peekNode(key);
+      inst.setNode(nrKey, cur < 0 ? pseudohash(key + inst.seed) : cur);
+      var perm = inst.nextShuffle(a, size);
+      inst.setNode(key, inst.peekNode(nrKey));
+      if (savedNr < 0) inst.resetNode(nrKey); else inst.setNode(nrKey, savedNr);
+      var order = [];
+      for (let i = 0; i < perm.size(); i++) order.push(perm.get(i));
+      perm.delete();
+      return order;
     }
 
     function saveDeckState() {
@@ -782,29 +816,32 @@
 
     window.deckState = {
       rounds: deckRounds,
+      packHands: deckPackHands,
       ops: deckOps,
       extra: extraRounds,
       get handAdjust() { return deckHandAdjust; },
       setHandAdjust: function(n) { deckHandAdjust = Math.max(-7, Math.min(20, parseInt(n, 10) || 0)); deckChanged(); },
       // Card joins the deck from round `round` of ante `ante` (e.g. bought after the Small Blind -> round 2).
-      add: function(name, ante, round) {
+      // `inShop` marks a change made in the shop before that round (from an Arcana / Spectral
+      // pack's hand), so the pack still shows the hand as it was dealt.
+      add: function(name, ante, round, inShop) {
         deckSeq++;
-        deckOps.push({ type: 'add', id: 'c' + deckSeq, name: name, ante: ante, round: round, seq: deckSeq });
+        deckOps.push({ type: 'add', id: 'c' + deckSeq, name: name, ante: ante, round: round, seq: deckSeq, inShop: !!inShop });
         noteEnhancement(name);
         deckChanged();
       },
       // Card leaves the deck from round `round` of ante `ante` (destroyed during the round before).
-      remove: function(id, name, ante, round) {
+      remove: function(id, name, ante, round, inShop) {
         deckSeq++;
-        deckOps.push({ type: 'remove', target: id, name: name, ante: ante, round: round, seq: deckSeq });
+        deckOps.push({ type: 'remove', target: id, name: name, ante: ante, round: round, seq: deckSeq, inShop: !!inShop });
         deckChanged();
       },
       // Card gains a seal / edition / enhancement from round `round` of ante `ante`. The card
       // itself is untouched, so it keeps its position in the deck order; only its name changes.
-      modify: function(id, was, name, ante, round) {
+      modify: function(id, was, name, ante, round, inShop) {
         if (name == was) return;
         deckSeq++;
-        deckOps.push({ type: 'modify', target: id, name: name, was: was, ante: ante, round: round, seq: deckSeq });
+        deckOps.push({ type: 'modify', target: id, name: name, was: was, ante: ante, round: round, seq: deckSeq, inShop: !!inShop });
         noteEnhancement(name);
         deckChanged();
       },
@@ -1777,6 +1814,11 @@
           // content streams are already advanced past them, so they are listed by name only.
           if (resume.currentShop) resume.currentShop.packs.forEach(pk => { output += pk + " - (on screen now; open it in the game to see its contents)\n"; });
         }
+        // Hands dealt by Arcana / Spectral packs, keyed by the pack's index in the list above
+        // (packs on screen from a save come first and get none: their shuffle is already done).
+        var firstShop = resumingAnte(a) ? resume.shopsRolled + 1 : 1;
+        var packIndexBase = (resumingAnte(a) && resume.currentShop) ? resume.currentShop.packs.length : 0;
+        var packHands = {}, packDraws = [], shopOrder = null;
         for (let p = 1; p <= numPacks; p++) {
           var pack = inst.nextPack(a);
           output += pack + " - ";
@@ -1784,6 +1826,19 @@
           var packType = packInfo.type;
           var packSize = packInfo.size;
           packInfo.delete();
+          // Every shop visit shuffles at cash out whatever its packs are, so pull once per shop.
+          // Shop 1 of antes 2+ follows the previous ante's boss; shop s otherwise follows round
+          // s-1 (round s in ante 1). What that round destroyed is gone; what the shop sells is not in yet.
+          var shop = firstShop + Math.floor((p - 1) / 2);
+          if ((p - 1) % 2 == 0) {
+            var sa = a, sr = a == 1 ? shop : shop - 1;
+            if (sr < 1) { sa = a - 1; sr = 3 + (extraRounds[a - 1] || 0); }
+            var shopNext = { ante: a, round: sa == a ? sr + 1 : 1 };
+            var shopDeck = deckAt(startCards, sa, sr, shopNext.ante, shopNext.round);
+            shopOrder = cashoutShuffle(inst, a, shopDeck.length).map(i => shopDeck[i]);
+            if (!DRAW_FROM_END) shopOrder.reverse();
+          }
+          packDraws.push(packType == "Arcana Pack" || packType == "Spectral Pack" ? { shop: shop, next: shopNext, order: shopOrder } : null);
           if (packType == "Celestial Pack") {
             var cards = inst.nextCelestialPack(packSize, a);
             for (let c = 0; c < packSize; c++) {
@@ -1851,6 +1906,18 @@
           }
           output += "\n";
         }
+        // The hand goes back to the bottom of the deck when the pack closes, so a second pack
+        // opened in the same shop deals the next cards down.
+        packDraws.forEach((d, i) => {
+          if (!d) return;
+          var other = packDraws[i ^ 1];
+          packHands[packIndexBase + i] = {
+            shop: d.shop, next: d.next, hand: handSize,
+            first: d.order.slice(0, handSize),
+            second: other && other.shop == d.shop ? d.order.slice(handSize, 2 * handSize) : null
+          };
+        });
+        deckPackHands[a] = packHands;
 
         output += "\n";
         if (a < minAnte) output = output.slice(0, anteOutputStart);

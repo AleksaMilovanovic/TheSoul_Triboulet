@@ -1103,6 +1103,48 @@ function searchAndHighlight() {
     }
 
 
+    /* Hand an Arcana / Spectral pack deals, collapsible, to the right of the pack's cards */
+    .packItem > .packHand {
+        width: auto;
+        min-height: 95px;
+        justify-content: center;
+        align-items: flex-start;
+        text-align: left;
+        margin-left: 6px;
+        padding-left: 8px;
+        border-left: 1px solid #555555;
+    }
+    .packHandTitle {
+        margin-top: 0;
+        font-weight: normal;
+        font-size: 11px;
+        padding: 2px 6px;
+    }
+    .packHandBody {
+        margin-top: 4px;
+    }
+    .packHandCards {
+        display: flex;
+        flex-wrap: wrap;
+        row-gap: 4px;
+        margin-bottom: 4px;
+    }
+    .deckCard.shopRemoved > :not(.shopChange):not(.deckCardMenu) {
+        opacity: 0.35;
+    }
+    .shopChange {
+        color: #ffb347 !important;
+    }
+    .shopChange .smallButton {
+        margin-left: 4px;
+        font-size: 9px;
+        padding: 0 3px;
+    }
+    .packHandLabel {
+        margin: 2px 0;
+        max-width: 480px;
+    }
+
     /* Pick-order hint under a pack whose cards can be clicked into the deck */
     .packItem > .packAddHint {
         flex-basis: 100%;
@@ -1497,6 +1539,81 @@ function searchAndHighlight() {
         return tile;
     }
 
+    // Card:get_nominal(), which the hand's default 'desc' sort orders by: rank, then face,
+    // then suit (Spades high). A Stone Card's suit weight is scaled by -1000, so it sinks.
+    const RANK_NOMINAL = { Jack: 10.1, Queen: 10.2, King: 10.3, Ace: 11.4 };
+    const SUIT_NOMINAL = { Diamonds: 0.01, Clubs: 0.02, Hearts: 0.03, Spades: 0.04 };
+    function handNominal(name) {
+        const p = parseStandardCardName(name);
+        if (!p) return -Infinity;
+        const base = RANK_NOMINAL[p.rank] || parseInt(p.rank, 10) || 0;
+        return base + (SUIT_NOMINAL[p.suit] || 0) * (p.modifiers.includes('Stone') ? -1000 : 1);
+    }
+
+    // Tag a pack-hand tile with what was recorded against it in this shop, with an undo.
+    function markShopChanges(tile, card, shopOps) {
+        const ops = shopOps.filter(op => op.target === card.id);
+        ops.forEach(op => {
+            const tag = document.createElement('div');
+            tag.className = 'modifier shopChange';
+            if (op.type === 'remove') { tile.classList.add('shopRemoved'); tag.textContent = 'Removed'; }
+            else if (op.type === 'modify') tag.textContent = '→ ' + getStandardCardName(op.name);
+            const undo = document.createElement('button');
+            undo.className = 'smallButton';
+            undo.textContent = 'Undo';
+            undo.addEventListener('click', (e) => { e.stopPropagation(); window.deckState.undo(op.seq); });
+            tag.appendChild(undo);
+            tile.appendChild(tag);
+        });
+    }
+
+    // Collapsible section to the right of an Arcana / Spectral pack: the hand it deals, as
+    // the game lays it out (sorted by rank), each tile keeping its draw position. When the
+    // shop's other pack deals a hand too, whichever you open second gets the next cards down.
+    function appendPackHand(packItem, key, info) {
+        const wrap = document.createElement('div');
+        wrap.className = 'packHand';
+        packItem.appendChild(wrap);
+        // Changes already recorded in this shop, shown on the cards they touch.
+        const shopOps = window.deckState.ops.filter(op => op.inShop
+            && op.ante === info.next.ante && op.round === info.next.round);
+        const changed = shopOps.filter(op => op.type !== 'add').length;
+        createCollapsible(wrap, key, 'Hand (' + info.first.length + ')' + (changed ? ' – ' + changed + ' changed' : ''), (body) => {
+            body.className = 'packHandBody';
+            const rows = [{ label: info.second ? 'Opened first' : null, cards: info.first, from: 1 }];
+            if (info.second) rows.push({ label: 'Opened after the other pack', cards: info.second, from: info.hand + 1 });
+            rows.forEach(row => {
+                if (row.label) {
+                    const lbl = document.createElement('div');
+                    lbl.className = 'modifier packHandLabel';
+                    lbl.textContent = row.label;
+                    body.appendChild(lbl);
+                }
+                const strip = document.createElement('div');
+                strip.className = 'packHandCards';
+                if (row.cards.length === 0) {
+                    const none = document.createElement('div');
+                    none.className = 'modifier';
+                    none.textContent = 'Deck runs out before this pack.';
+                    strip.appendChild(none);
+                }
+                row.cards.map((card, i) => ({ card, pos: row.from + i }))
+                    .sort((x, y) => handNominal(y.card.name) - handNominal(x.card.name))
+                    .forEach(({ card, pos }) => {
+                        const tile = makeDeckCardTile(card, pos, false);
+                        markShopChanges(tile, card, shopOps);
+                        attachDeckCardMenu(tile, card, null, info.next.ante, info.next.round, true);
+                        strip.appendChild(tile);
+                    });
+                body.appendChild(strip);
+            });
+            const note = document.createElement('div');
+            note.className = 'modifier packHandLabel';
+            note.textContent = 'Dealt off the cash-out shuffle (shop ' + info.shop + ' this ante); numbers are draw positions. Click a card to record what the pack’s cards did to it: it changes the deck from round ' + info.next.round + ' of ante ' + info.next.ante + ' on, while this hand stays as dealt. Only as right as the Deck & Draw Order record.';
+            body.appendChild(note);
+        }, 'packHandTitle');
+    }
+
     // Consumables and Jokers that pick one of your Jokers at random, modelled against the
     // game's own card.lua / misc_functions.lua.
     //
@@ -1784,11 +1901,14 @@ function searchAndHighlight() {
     // Remove and Duplicate both take effect from the next shuffle (nextA / nextR), as does
     // Modify — a tarot sealing or enhancing a card edits it in place, so it keeps its
     // position in the deck order, while a duplicate is a new card at the end of it.
-    function attachDeckCardMenu(tile, card, roundNum, nextA, nextR) {
+    // With `inShop` the card is in an Arcana / Spectral pack's hand: changes are recorded from
+    // the next round like any other, but flagged so the pack keeps showing the hand as dealt.
+    function attachDeckCardMenu(tile, card, roundNum, nextA, nextR, inShop) {
         const ds = window.deckState;
         if (!ds) return;
+        const when = inShop ? 'in this shop' : 'during round ' + roundNum;
         tile.classList.add('clickable');
-        tile.title = 'Click for what happens to this card during round ' + roundNum
+        tile.title = 'Click for what happens to this card ' + when
             + ' (shift+click removes it straight away)';
 
         const closeMenu = () => {
@@ -1799,7 +1919,7 @@ function searchAndHighlight() {
 
         tile.addEventListener('click', (e) => {
             if (e.target.closest('.deckCardMenu')) return;
-            if (e.shiftKey) { ds.remove(card.id, card.name, nextA, nextR); return; }
+            if (e.shiftKey) { ds.remove(card.id, card.name, nextA, nextR, inShop); return; }
             if (tile.querySelector('.deckCardMenu')) { closeMenu(); return; }
             // One menu at a time, so the draw-order strip doesn't fill up with panels.
             document.querySelectorAll('.deckCard.menuOpen').forEach(t => {
@@ -1822,10 +1942,10 @@ function searchAndHighlight() {
                 return b;
             };
 
-            mkBtn(menu, 'Remove', 'Destroyed, sold, or removed during round ' + roundNum,
-                () => ds.remove(card.id, card.name, nextA, nextR));
-            mkBtn(menu, 'Duplicate', 'A copy is created during round ' + roundNum + ' (Death, DNA, Hanging Chad...). New cards join the end of the deck order.',
-                () => ds.add(card.name, nextA, nextR));
+            mkBtn(menu, 'Remove', 'Destroyed, sold, or removed ' + when + (inShop ? ' (Hanged Man, Immolate, Familiar...)' : ''),
+                () => ds.remove(card.id, card.name, nextA, nextR, inShop));
+            mkBtn(menu, 'Duplicate', 'A copy is created ' + when + (inShop ? ' (Cryptid...)' : ' (Death, DNA, Hanging Chad...)') + '. New cards join the end of the deck order.',
+                () => ds.add(card.name, nextA, nextR, inShop));
 
             // Modify only makes sense for a card the name parser understands.
             const parsed = parseStandardCardName(card.name);
@@ -1868,7 +1988,7 @@ function searchAndHighlight() {
             form.appendChild(preview);
 
             mkBtn(form, 'Apply from round ' + nextR, 'Record the change; it shows from the next shuffle on.',
-                () => ds.modify(card.id, card.name, editedName(), nextA, nextR));
+                () => ds.modify(card.id, card.name, editedName(), nextA, nextR, inShop));
             menu.appendChild(form);
             tile.appendChild(menu);
         });
@@ -2764,7 +2884,7 @@ function searchAndHighlight() {
                             const what = op.type === 'add' ? 'Added ' + op.name
                                 : op.type === 'modify' ? 'Changed ' + op.was + ' to ' + op.name
                                 : 'Removed ' + op.name;
-                            row.textContent = what + ' from round ' + op.round + ' ';
+                            row.textContent = what + (op.inShop ? ' in the shop before round ' : ' from round ') + op.round + ' ';
                             const undo = document.createElement('button');
                             undo.className = 'smallButton';
                             undo.textContent = 'Undo';
@@ -3139,6 +3259,9 @@ function searchAndHighlight() {
                     // from one pack sort in the pack's own order however you pick them. The
                     // tracker appends adds in click order, so clicking out of order shifts the
                     // draw order of every round after it.
+                    const packHand = window.deckState && (window.deckState.packHands[anteNum] || {})[pi];
+                    if (packHand) appendPackHand(packItem, title + ':packhand:' + pi, packHand);
+
                     if (addableCards > 1) {
                         const hint = document.createElement('div');
                         hint.className = 'packAddHint';
