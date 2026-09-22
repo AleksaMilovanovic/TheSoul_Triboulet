@@ -1947,9 +1947,25 @@ function searchAndHighlight() {
             mkBtn(menu, 'Duplicate', 'A copy is created ' + when + (inShop ? ' (Cryptid...)' : ' (Death, DNA, Hanging Chad...)') + '. New cards join the end of the deck order.',
                 () => ds.add(card.name, nextA, nextR, inShop));
 
+            // In a pack's hand the tile shows the card as dealt, so build on whatever was already
+            // recorded for it in this shop (two Strengths on one card go up two ranks).
+            const shopEdit = inShop && ds.ops.filter(op => op.type === 'modify' && op.inShop && op.target === card.id
+                && op.ante === nextA && op.round === nextR).pop();
+            const curName = shopEdit ? shopEdit.name : card.name;
+
             // Modify only makes sense for a card the name parser understands.
-            const parsed = parseStandardCardName(card.name);
+            const parsed = parseStandardCardName(curName);
             if (!parsed) { tile.appendChild(menu); return; }
+
+            // Strength: card:set_base to the next rank up, Ace wrapping to 2. Seal, edition and
+            // enhancement stay, and so does the card's place in the deck order.
+            const rankIdx = CARD_RANKS.indexOf(parsed.rank);
+            if (rankIdx >= 0) {
+                const upRank = CARD_RANKS[(rankIdx + 1) % CARD_RANKS.length];
+                const upName = curName.replace(/(\S+)( of \S+)$/, upRank + '$2');
+                mkBtn(menu, 'Rank +1', 'Strength ' + when + ': ' + getStandardCardName(curName) + ' becomes ' + getStandardCardName(upName) + ', from round ' + nextR + '.',
+                    () => ds.modify(card.id, curName, upName, nextA, nextR, inShop));
+            }
 
             const form = document.createElement('div');
             form.className = 'deckCardEdit';
@@ -1988,14 +2004,16 @@ function searchAndHighlight() {
             form.appendChild(preview);
 
             mkBtn(form, 'Apply from round ' + nextR, 'Record the change; it shows from the next shuffle on.',
-                () => ds.modify(card.id, card.name, editedName(), nextA, nextR, inShop));
+                () => ds.modify(card.id, curName, editedName(), nextA, nextR, inShop));
             menu.appendChild(form);
             tile.appendChild(menu);
         });
     }
 
     // Mini chooser under a Standard Pack card: add it to the tracked deck from a chosen round.
-    function attachDeckAddChooser(container, cardName, anteNum) {
+    // `packShop` is the pack's entry in deckState.packShops: the card can only join from the
+    // round after that shop (shop 1 of antes 2+ comes before round 1).
+    function attachDeckAddChooser(container, cardName, anteNum, packShop) {
         const ds = window.deckState;
         if (!ds) return;
         container.classList.add('clickable');
@@ -2008,7 +2026,8 @@ function searchAndHighlight() {
             menu.className = 'deckAddMenu';
             const roundNums = (ds.rounds[anteNum] || []).map((rd, i) => rd.round || (i + 1));
             const opts = [];
-            (roundNums.length ? roundNums : [1, 2, 3]).filter(r => r >= 2).forEach(r => opts.push({ label: 'From round ' + r, a: anteNum, r }));
+            const firstRound = packShop ? packShop.next.round : (anteNum === 1 ? 2 : 1);
+            (roundNums.length ? roundNums : [1, 2, 3]).filter(r => r >= firstRound).forEach(r => opts.push({ label: 'From round ' + r, a: anteNum, r }));
             opts.push({ label: 'From ante ' + (anteNum + 1), a: anteNum + 1, r: 1 });
             opts.forEach(o => {
                 const b = document.createElement('button');
@@ -3228,7 +3247,7 @@ function searchAndHighlight() {
                             addableCards++;
 
                             cardContainer.appendChild(makeStandardCardSprite(rank, suit, modifiers, seal));
-                            attachDeckAddChooser(cardContainer, cardName, anteNum);
+                            attachDeckAddChooser(cardContainer, cardName, anteNum, window.deckState && (window.deckState.packShops[anteNum] || [])[pi]);
 
                             const cardText = document.createElement('div');
                             cardText.textContent = getStandardCardName(cardName);

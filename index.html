@@ -707,6 +707,7 @@
     const PERKEO_PULL_PER_TRIGGER = true;
     var deckOps = [];        // { type:'add', id, name, ante, round, seq } | { type:'remove', target, ante, round, seq } | { type:'modify', target, name, was, ante, round, seq }
     var deckRounds = {};     // ante -> [{ hand, cards: [{ id, name }] }], rebuilt by performAnalysis
+    var deckPackShops = {};  // ante -> [{ shop, next: { ante, round } }] per pack as listed: the shop it sits in and the round after
     var deckPackHands = {};  // ante -> { [pack index as listed]: { shop, hand, first, second } } for Arcana / Spectral packs
     var extraRounds = {};    // ante -> extra rounds revealed (replaying an ante after Hieroglyph/Petroglyph)
     var deckHandAdjust = 0;  // manual hand-size tweak (Juggler, Stuntman, Turtle Bean, ...)
@@ -817,6 +818,7 @@
     window.deckState = {
       rounds: deckRounds,
       packHands: deckPackHands,
+      packShops: deckPackShops,
       ops: deckOps,
       extra: extraRounds,
       get handAdjust() { return deckHandAdjust; },
@@ -1819,6 +1821,11 @@
         var firstShop = resumingAnte(a) ? resume.shopsRolled + 1 : 1;
         var packIndexBase = (resumingAnte(a) && resume.currentShop) ? resume.currentShop.packs.length : 0;
         var packHands = {}, packDraws = [], shopOrder = null;
+        // Shop s of an ante comes before round s (ante 1 has no shop before its first blind,
+        // so there shop s comes before round s+1).
+        var packShops = [];
+        var shopAt = (sh) => ({ shop: sh, next: { ante: a, round: a == 1 ? sh + 1 : sh } });
+        for (let i = 0; i < packIndexBase; i++) packShops.push(shopAt(resume.shopsRolled));
         for (let p = 1; p <= numPacks; p++) {
           var pack = inst.nextPack(a);
           output += pack + " - ";
@@ -1830,6 +1837,7 @@
           // Shop 1 of antes 2+ follows the previous ante's boss; shop s otherwise follows round
           // s-1 (round s in ante 1). What that round destroyed is gone; what the shop sells is not in yet.
           var shop = firstShop + Math.floor((p - 1) / 2);
+          packShops.push(shopAt(shop));
           if ((p - 1) % 2 == 0) {
             var sa = a, sr = a == 1 ? shop : shop - 1;
             if (sr < 1) { sa = a - 1; sr = 3 + (extraRounds[a - 1] || 0); }
@@ -1918,6 +1926,7 @@
           };
         });
         deckPackHands[a] = packHands;
+        deckPackShops[a] = packShops;
 
         output += "\n";
         if (a < minAnte) output = output.slice(0, anteOutputStart);
