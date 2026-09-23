@@ -554,6 +554,11 @@ function searchAndHighlight() {
         font-size: 11px;
         padding: 2px 7px;
     }
+    /* Card picked out by "Find next instance of" */
+    .deckCard.findHit, .queueItem.findHit {
+        background-color: rgba(211, 139, 255, 0.16);
+        box-shadow: inset 0 0 0 2px #d38bff;
+    }
     .windowHit {
         box-shadow: inset 0 0 0 2px #7fd3ff;
     }
@@ -1443,6 +1448,97 @@ function searchAndHighlight() {
 }
 .rsStep.aheadNext .rsThumb {
     opacity: 0.9;
+}
+.rsGridHolder {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px dashed #6f86c4;
+    overflow-x: auto;
+}
+.rsGrid {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.rsGridRow {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+}
+.rsGridHead {
+    align-items: flex-end;
+    color: #a9c1ff;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+.rsGridLabel {
+    flex-shrink: 0;
+    width: 76px;
+    padding-top: 4px;
+    color: #cccccc;
+    font-size: 10px;
+    line-height: 1.25;
+}
+.rsGridHead .rsGridLabel {
+    padding-top: 0;
+    color: #a9c1ff;
+}
+.rsGridColHead {
+    flex-shrink: 0;
+    width: 58px;
+    text-align: center;
+}
+.rsGridKey {
+    color: #777777;
+    font-size: 9px;
+}
+.rsGridReset {
+    margin-top: 3px;
+    padding: 0 5px;
+    border: 1px solid #6f86c4;
+    border-radius: 8px;
+    background: transparent;
+    color: #a9c1ff;
+    font-family: inherit;
+    font-size: 9px;
+    cursor: pointer;
+}
+.rsGridReset:hover {
+    background-color: #6f86c4;
+    color: #1e1e1e;
+}
+.rsCell {
+    cursor: pointer;
+    border-radius: 4px;
+    padding: 2px 0;
+    transition: background-color 0.1s;
+}
+.rsCell:hover, .rsCell:focus-visible {
+    background-color: rgba(111, 134, 196, 0.22);
+    outline: none;
+}
+.rsStep.rsLand .rsThumb {
+    outline: 2px solid #96ed79;
+    outline-offset: 1px;
+    filter: none;
+}
+.rsStep.rsLand .rsWhy {
+    background-color: rgba(150, 237, 121, 0.2);
+    color: #96ed79;
+}
+.rsGridResetAll {
+    margin-left: 4px;
+    font-size: 10px;
+    padding: 1px 6px;
+}
+.rsNote {
+    max-width: 420px;
+    margin-top: 8px;
+    color: #999999;
+    font-size: 10px;
+    line-height: 1.35;
+    white-space: normal;
 }
 .rsArrow {
     flex-shrink: 0;
@@ -3145,6 +3241,7 @@ function searchAndHighlight() {
                                 deckTiles.push(tile);
                             });
                             appendJumpBar(rb, scroll, deckTiles, { min: 8 });
+                            appendInstanceFinder(rb, scroll, deckTiles, rd.cards.map(c => standardFinderItem(c.name)), STANDARD_FINDER_FIELDS, { memoryKey: 'find:deck' });
                             appendHandFinder(rb, scroll, deckTiles, rd.cards, rd.hand);
                             rb.appendChild(scroll);
                             attachDragScroll(scroll);
@@ -3338,6 +3435,7 @@ function searchAndHighlight() {
                     refresh();
                 };
                 appendJumpBar(body, scrollable, tiles, { frameSize: shopSlots, reveal: revealSeen });
+                appendInstanceFinder(body, scrollable, tiles, queue.map(parseCardItem), queueFinderFields(queue), { reveal: revealSeen });
                 appendWindowFinder(body, anteNum, tiles, queue, scrollable);
                 body.appendChild(scrollable);
                 attachDragScroll(scrollable);
@@ -3411,6 +3509,7 @@ function searchAndHighlight() {
                                 genTiles.push(genTile);
                             });
                             appendJumpBar(body, generatorScrollable, genTiles, { min: 8 });
+                            if (cards.length > 8) appendInstanceFinder(body, generatorScrollable, genTiles, cards.map(parseCardItem), queueFinderFields(cards));
                             body.appendChild(generatorScrollable);
                             attachDragScroll(generatorScrollable);
                         });
@@ -4162,7 +4261,125 @@ function searchAndHighlight() {
         step.appendChild(why);
         return step;
     }
-    function openResamplePop(badge, rerolls, ahead, finalName, finalSprite, kind, context) {
+    // ---- Stream grid ----
+    // With lookahead on, the popover lays out each reroll stream this card would use next
+    // (_resample<n>) as a row of its upcoming values. Clicking a value moves that stream
+    // past it, standing in for other cards using it up in the game; the value after becomes
+    // the row's first. Advances belong to the stream, so every card on it sees them, and they
+    // only change this view, never the queues. Values come from a quiet re-run for this one
+    // card (window.resampleGrid), cached until the next analysis.
+    const rsAdvance = new Map();     // seed:deck:<stream key>_resample<n> -> values skipped
+    const rsGridCache = new Map();   // resample-history key -> { cols, grid }
+    document.addEventListener('analysisComplete', () => rsGridCache.clear());
+    const rsAdvKey = (streamKey, r) => document.getElementById('seed').value + ':' + document.getElementById('deck').value + ':' + streamKey + '_resample' + r;
+    function fetchGrid(cardKey, rows, needCols) {
+        const hit = rsGridCache.get(cardKey);
+        if (hit && hit.rows >= rows && hit.cols >= needCols) return hit.grid;
+        if (!window.resampleGrid) return null;
+        const cols = needCols + 10;   // headroom so the next few clicks need no re-run
+        const grid = window.resampleGrid(cardKey, rows, cols);
+        rsGridCache.set(cardKey, { rows, cols, grid });
+        return grid;
+    }
+    function renderStreamGrid(holder, cardKey, kind, X) {
+        holder.innerHTML = '';
+        const peekCols = (streamKey, rows) => Math.max(...rows.map(r => rsAdvance.get(rsAdvKey(streamKey, r)) || 0));
+        let grid = fetchGrid(cardKey, X, X);
+        if (!grid) return false;
+        const need = peekCols(grid.streamKey, grid.rows.map(r => r.r)) + X;
+        if (need > (rsGridCache.get(cardKey).cols)) grid = fetchGrid(cardKey, X, need);
+
+        const rowsView = grid.rows.map(row => {
+            const off = rsAdvance.get(rsAdvKey(grid.streamKey, row.r)) || 0;
+            return { r: row.r, off, cells: row.cells.slice(off, off + X) };
+        });
+        // Where a reroll of this card lands: the first row whose front value is takeable.
+        const landRow = rowsView.findIndex(v => v.cells[0] && v.cells[0].why === 'n');
+
+        const wrap = document.createElement('div');
+        wrap.className = 'rsGrid';
+        const headRow = document.createElement('div');
+        headRow.className = 'rsGridRow rsGridHead';
+        const corner = document.createElement('div');
+        corner.className = 'rsGridLabel';
+        corner.textContent = 'if held \u2192';
+        headRow.appendChild(corner);
+        for (let c = 0; c < X; c++) {
+            const h = document.createElement('div');
+            h.className = 'rsGridColHead';
+            h.textContent = c === 0 ? 'next' : '+' + c;
+            headRow.appendChild(h);
+        }
+        wrap.appendChild(headRow);
+
+        const ORD = ['1st', '2nd', '3rd'];
+        rowsView.forEach((v, ri) => {
+            const rowEl = document.createElement('div');
+            rowEl.className = 'rsGridRow';
+            const lab = document.createElement('div');
+            lab.className = 'rsGridLabel';
+            const n = v.r - 1;
+            const main = document.createElement('div');
+            main.textContent = (ORD[n - 1] || n + 'th') + ' reroll';
+            const sub = document.createElement('div');
+            sub.className = 'rsGridKey';
+            sub.textContent = '_resample' + v.r;
+            lab.append(main, sub);
+            if (v.off > 0) {
+                const adv = document.createElement('button');
+                adv.type = 'button';
+                adv.className = 'rsGridReset';
+                adv.textContent = '+' + v.off + ' \u21BA';
+                adv.title = 'Advanced ' + v.off + ' past where the queue has it. Click to put this stream back.';
+                adv.addEventListener('click', (e) => { e.stopPropagation(); rsAdvance.delete(rsAdvKey(grid.streamKey, v.r)); renderStreamGrid(holder, cardKey, kind, X); });
+                lab.appendChild(adv);
+            }
+            rowEl.appendChild(lab);
+            v.cells.forEach((cell, c) => {
+                const key = cell.why in RS_WHY ? cell.why : 'h';
+                const step = resampleStep(resampleThumb(cell.item, kind), cell.item, key, RS_WHY[key].label, RS_WHY[key].title, 0);
+                step.classList.remove('kept', 'rejected');
+                step.classList.add('ahead', 'rsCell', key === 'n' ? 'aheadNext' : 'rejected');
+                if (ri === landRow && c === 0) {
+                    step.classList.add('rsLand');
+                    step.querySelector('.rsWhy').textContent = 'Lands here';
+                }
+                step.title = '_resample' + v.r + ', value ' + (v.off + c + 1) + ': ' + (cell.item === 'RETRY' ? 'placeholder' : cell.item)
+                    + ' \u2014 ' + RS_WHY[key].title + '. Click to move this stream past it.';
+                step.setAttribute('role', 'button');
+                step.tabIndex = 0;
+                const advance = () => {
+                    rsAdvance.set(rsAdvKey(grid.streamKey, v.r), v.off + c + 1);
+                    renderStreamGrid(holder, cardKey, kind, X);
+                };
+                step.addEventListener('click', (e) => { e.stopPropagation(); advance(); });
+                step.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); advance(); } });
+                rowEl.appendChild(step);
+            });
+            wrap.appendChild(rowEl);
+        });
+        holder.appendChild(wrap);
+
+        const foot = document.createElement('div');
+        foot.className = 'rsNote';
+        foot.textContent = (landRow < 0
+            ? 'None of these rows\u2019 next values can be taken, so a reroll would go deeper than shown. '
+            : '')
+            + 'Each row is one stream shared by every card of this pool and source in the ante; it moves only when a card really rerolls through it. Click a card to move its stream past it (the next value becomes the first); \u21BA puts a row back. This only changes this view.';
+        if (rowsView.some(v => v.off > 0)) {
+            const all = document.createElement('button');
+            all.type = 'button';
+            all.className = 'smallButton rsGridResetAll';
+            all.textContent = 'Reset all';
+            all.addEventListener('click', (e) => { e.stopPropagation(); rowsView.forEach(v => rsAdvance.delete(rsAdvKey(grid.streamKey, v.r))); renderStreamGrid(holder, cardKey, kind, X); });
+            foot.appendChild(document.createTextNode(' '));
+            foot.appendChild(all);
+        }
+        holder.appendChild(foot);
+        return true;
+    }
+
+    function openResamplePop(badge, rerolls, ahead, finalName, finalSprite, kind, context, cardKey) {
         const pop = document.createElement('div');
         pop.className = 'rsPop';
         pop.setAttribute('role', 'dialog');
@@ -4195,7 +4412,12 @@ function searchAndHighlight() {
         if (finalSprite) keptThumb.appendChild(finalSprite.cloneNode(true));
         else { keptThumb.classList.add('text'); keptThumb.textContent = finalName; }
         chain.appendChild(resampleStep(keptThumb, finalName, 'k', 'Kept', 'the roll that stuck', rerolls.length + 1));
-        if (ahead.length > 0) {
+        // With lookahead on, the stream grid below replaces the inline "if held" chain.
+        const X = window.getResampleLookahead ? window.getResampleLookahead() : 0;
+        const gridHolder = document.createElement('div');
+        gridHolder.className = 'rsGridHolder';
+        const hasGrid = X > 0 && !!cardKey && renderStreamGrid(gridHolder, cardKey, kind, X);
+        if (ahead.length > 0 && !hasGrid) {
             const sep = document.createElement('div');
             sep.className = 'rsAheadSep';
             sep.textContent = 'if held';
@@ -4216,6 +4438,13 @@ function searchAndHighlight() {
             });
         }
         pop.appendChild(chain);
+        if (hasGrid) pop.appendChild(gridHolder);
+        else if (ahead.length > 0) {
+            const note = document.createElement('div');
+            note.className = 'rsNote';
+            note.textContent = 'Each reroll step is one stream shared by every card of this pool and source in the ante, and it only moves when a card really rerolls. Until then, cards show the same lookahead; once one card rerolls, the next to reroll gets the stream\u2019s following value.';
+            pop.appendChild(note);
+        }
 
         document.body.appendChild(pop);
         const r = badge.getBoundingClientRect();
@@ -4261,7 +4490,7 @@ function searchAndHighlight() {
             e.stopPropagation();
             const wasOpen = rsOpen && rsOpen.badge === badge;
             closeResamplePop();
-            if (!wasOpen) openResamplePop(badge, rerolls, ahead, finalName, sprite, kind, context);
+            if (!wasOpen) openResamplePop(badge, rerolls, ahead, finalName, sprite, kind, context, key);
         });
         holder.appendChild(badge);
     }
@@ -4272,6 +4501,118 @@ function searchAndHighlight() {
         badge.textContent = pos;
         if (title) badge.title = title;
         return badge;
+    }
+
+    // ---- Find next instance of ------------------------------------------------
+    // Picks out every card in a row matching all the chosen fields (AND; "Any" ignores a
+    // field). Find goes to the first match, Next to the one after the current match.
+    // fields: [{ label, options: [{ v, t }], match(item, v) }], one entry of `items` per tile.
+    function appendInstanceFinder(parent, scrollable, tiles, items, fields, opts) {
+        const o = opts || {};
+        const bar = document.createElement('div');
+        bar.className = 'jumpBar findBar';
+        const label = document.createElement('span');
+        label.className = 'jumpLabel';
+        label.textContent = 'Find next instance of';
+        bar.appendChild(label);
+
+        const selects = fields.map((f, fi) => {
+            const sel = document.createElement('select');
+            [{ v: '', t: 'Any ' + f.label }].concat(f.options).forEach(op => {
+                const el = document.createElement('option');
+                el.value = op.v; el.textContent = op.t;
+                sel.appendChild(el);
+            });
+            if (o.memoryKey) remember(sel, o.memoryKey + ':' + fi);
+            bar.appendChild(sel);
+            return sel;
+        });
+
+        const result = document.createElement('div');
+        result.className = 'modifier handResult';
+        let current = -1;   // tile index of the match on screen, -1 before the first Find
+        const chosen = () => fields.map((f, i) => ({ f, v: selects[i].value, t: selects[i].selectedOptions[0].textContent })).filter(c => c.v !== '');
+        const matches = () => {
+            const c = chosen();
+            const out = [];
+            items.forEach((it, i) => { if (it && c.every(x => x.f.match(it, x.v))) out.push(i); });
+            return out;
+        };
+        const describe = () => chosen().map(c => c.t).join(' + ');
+        const mark = (idx) => {
+            tiles.forEach(t => t.classList.remove('findHit'));
+            if (idx >= 0) tiles[idx].classList.add('findHit');
+        };
+        const say = (text, noHit) => { result.className = 'modifier handResult' + (noHit ? ' noHit' : ''); result.textContent = text; };
+
+        const run = (again) => {
+            if (chosen().length === 0) { mark(-1); current = -1; nextBtn.disabled = true; say('Pick at least one thing to look for.', true); return; }
+            const all = matches();
+            const from = again ? current + 1 : 0;
+            const k = all.findIndex(i => i >= from);
+            if (k < 0) {
+                nextBtn.disabled = true;
+                if (!again || current < 0) { mark(-1); say('No ' + describe() + ' in this row’s ' + tiles.length + ' cards.', true); }
+                else say('No more ' + describe() + ' after position ' + (current + 1) + ' (' + all.length + ' in all).', true);
+                return;
+            }
+            current = all[k];
+            mark(current);
+            scrollTileIntoView(scrollable, tiles[current], o.reveal);
+            say(describe() + ': ' + (k + 1) + ' of ' + all.length + ', at position ' + (current + 1) + '.'
+                + (k + 1 < all.length ? ' Next is position ' + (all[k + 1] + 1) + '.' : ' That is the last one.'));
+            nextBtn.disabled = k + 1 >= all.length;
+        };
+
+        const findBtn = document.createElement('button');
+        findBtn.className = 'smallButton';
+        findBtn.textContent = 'Find';
+        findBtn.title = 'The first card in this row matching everything chosen';
+        findBtn.addEventListener('click', () => run(false));
+        bar.appendChild(findBtn);
+        const nextBtn = document.createElement('button');
+        nextBtn.className = 'smallButton';
+        nextBtn.textContent = 'Next';
+        nextBtn.title = 'The next matching card after the one shown';
+        nextBtn.disabled = true;
+        nextBtn.addEventListener('click', () => run(true));
+        bar.appendChild(nextBtn);
+        selects.forEach(sel => sel.addEventListener('change', () => { current = -1; mark(-1); nextBtn.disabled = true; result.textContent = ''; }));
+        bar.appendChild(result);
+        parent.appendChild(bar);
+        return bar;
+    }
+
+    // Playing cards: rank, suit, enhancement, seal, edition. A Stone Card has no rank or
+    // suit; a Wild Card counts as every suit, as it does in a hand.
+    const STD_ENHANCEMENTS = CARD_ENHANCEMENTS.filter(e => e);
+    const STD_EDITIONS = CARD_EDITIONS.filter(e => e);
+    function standardFinderItem(name) {
+        const p = parseStandardCardName(name);
+        if (!p) return null;
+        return {
+            rank: p.rank, suit: p.suit, seal: p.seal || '',
+            enh: p.modifiers.find(m => STD_ENHANCEMENTS.includes(m)) || '',
+            ed: p.modifiers.find(m => STD_EDITIONS.includes(m)) || '',
+        };
+    }
+    const NONE = '__none';
+    const withNone = (vals, noneText) => vals.map(v => ({ v, t: v })).concat([{ v: NONE, t: noneText }]);
+    const STANDARD_FINDER_FIELDS = [
+        { label: 'rank', options: CARD_RANKS.map(v => ({ v, t: v })), match: (it, v) => it.enh !== 'Stone' && it.rank === v },
+        { label: 'suit', options: CARD_SUITS.map(v => ({ v, t: v })), match: (it, v) => it.enh !== 'Stone' && (it.suit === v || it.enh === 'Wild') },
+        { label: 'enhancement', options: withNone(STD_ENHANCEMENTS, 'No enhancement'), match: (it, v) => v === NONE ? !it.enh : it.enh === v },
+        { label: 'seal', options: withNone(CARD_SEALS.filter(x => x), 'No seal'), match: (it, v) => v === NONE ? !it.seal : it.seal === v },
+        { label: 'edition', options: withNone(STD_EDITIONS, 'No edition'), match: (it, v) => v === NONE ? !it.ed : it.ed === v },
+    ];
+    // Jokers / consumables: which card, and its edition.
+    const QUEUE_EDITIONS = ['Foil', 'Holographic', 'Polychrome', 'Negative'];
+    function queueFinderFields(lines) {
+        const names = [...new Set(lines.map(l => parseCardItem(l).cardName))].sort((a, b) => a.localeCompare(b));
+        return [
+            { label: 'card', options: names.map(v => ({ v, t: v })), match: (it, v) => it.cardName === v },
+            { label: 'edition', options: withNone(QUEUE_EDITIONS, 'No edition'), match: (it, v) => v === NONE ? it.itemModifiers.length === 0 : it.itemModifiers.includes(v) },
+        ];
     }
 
     // opts: { frameSize } one button per shop frame, { reveal } un-collapse before

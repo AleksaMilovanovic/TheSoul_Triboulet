@@ -51,8 +51,14 @@ struct Instance {
     // until the chain has N+1 rolls, the rolls the game would make next if the kept item
     // (and each valid pick after it) were held: "item\treason\t+\n", reason n for a roll
     // that would be accepted. Lookahead only peeks at the resample streams, never advances them.
+    // Stream grid (for one card at a time, when the UI asks): after the kept item, "G\t<ID>\n"
+    // then, for each of gridRows reroll streams from this card's next reroll on, its next
+    // gridCols values as "g\t<resample index>\t<item>\t<reason>\n". Reasons as above, with
+    // the kept item counted as held (the grid is what a reroll of this card would see).
     bool recordResamples = false;
     int resampleLookahead = 0;
+    int gridRows = 0;
+    int gridCols = 0;
     std::string resampleTrail;
     std::vector<std::string> packResamples;
     LuaRandom rng;
@@ -63,6 +69,29 @@ struct Instance {
         rng = LuaRandom(0);
         cache.generatedFirstPack = false;
     };
+    void setResampleGrid(int rows, int cols) {
+        gridRows = rows < 0 ? 0 : (rows > 50 ? 50 : rows);
+        gridCols = cols < 0 ? 0 : (cols > 500 ? 500 : cols);
+    }
+    void noteGrid(const std::string& ID, const std::vector<std::string>& items, const std::string& kept, int rolls) {
+        resampleTrail += "G\t";
+        resampleTrail += ID;
+        resampleTrail += '\n';
+        for (int r = rolls + 1; r <= rolls + gridRows; r++) {
+            std::string key = ID+"_resample"+std::to_string(r);
+            double v = cache.nodes.count(key) ? cache.nodes[key] : pseudohash(key+seed);
+            for (int c = 0; c < gridCols; c++) {
+                v = round13(std::fmod(v*1.72431234+2.134453429141,1));
+                LuaRandom peek((v + hashedSeed)/2);
+                std::string item = items[peek.randint(0, items.size()-1)];
+                char reason = 'n';
+                if (item == "RETRY") reason = 'r';
+                else if (isLocked(item)) reason = 'l';
+                else if (!params.showman && (isHeld(item) || item == kept)) reason = 'h';
+                resampleTrail += "g\t" + std::to_string(r) + "\t" + item + "\t" + reason + "\n";
+            }
+        }
+    }
     void setResampleLookahead(int n) {
         resampleLookahead = n < 0 ? 0 : (n > 50 ? 50 : n);
     }
@@ -167,6 +196,7 @@ struct Instance {
             }
         }
         if (recordResamples && resampleLookahead > 0) noteLookahead(ID, items, item, rolls);
+        if (recordResamples && gridRows > 0 && gridCols > 0) noteGrid(ID, items, item, rolls);
         return item;
     }
     std::string randweightedchoice(std::string ID, std::vector<WeightedItem> items) {

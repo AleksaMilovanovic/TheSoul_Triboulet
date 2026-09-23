@@ -1221,7 +1221,25 @@
     // Lookahead N: every card's chain runs to at least N+1 rolls, peeking past the kept one.
     var resampleLookahead = 0;
     try { resampleLookahead = Math.max(0, Math.min(50, parseInt(localStorage.getItem('theSoulResampleLookahead'), 10) || 0)); } catch (e) { /* page-only */ }
-    var analysisQuiet = false;      // build the output string, write nothing to the page
+    var analysisQuiet = false;
+    // Stream grid for one card: { key, rows, cols } while a quiet run fetches it.
+    var rsGridRequest = null;
+    // The next `cols` values of each of `rows` reroll streams, as seen by the card at `key`
+    // (a resample-history key). Re-runs the analysis quietly; the page is untouched.
+    // Returns { streamKey, rows: [{ r, cells: [{ item, why }] }] } or null.
+    window.getResampleLookahead = function() { return resampleLookahead; };
+    window.resampleGrid = function(key, rows, cols) {
+      var prevQuiet = analysisQuiet, prevReq = rsGridRequest;
+      var req = { key: key, rows: rows, cols: cols, result: null };
+      rsGridRequest = req; analysisQuiet = true;
+      try { performAnalysis(); } finally { rsGridRequest = prevReq; analysisQuiet = prevQuiet; }
+      var entries = req.result || [];
+      var head = entries.find(e => e.gridKey);
+      if (!head) return null;
+      var byR = {};
+      entries.filter(e => e.grid).forEach(e => { (byR[e.r] = byR[e.r] || []).push({ item: e.item, why: e.why }); });
+      return { streamKey: head.gridKey, rows: Object.keys(byR).map(Number).sort((x, y) => x - y).map(r => ({ r: r, cells: byR[r] })) };
+    };      // build the output string, write nothing to the page
     window.holdTest = {
       // That ante's shop queue as "N) Card" lines. `holds` are names (held for the whole
       // ante) or { name, fromSlot } pairs.
@@ -1545,11 +1563,24 @@
 
       // It's analysis time!
       var inst = new Immolate.Instance(seed);
-      var rsHist = ((showResampleHistory || resampleLookahead > 0) && !analysisQuiet) ? {} : null;
+      var rsGrid = rsGridRequest;
+      var rsHist = (((showResampleHistory || resampleLookahead > 0) && !analysisQuiet) || rsGrid) ? {} : null;
       if (rsHist) { inst.setResampleLookahead(resampleLookahead); inst.setRecordResamples(true); }
-      var rsParse = (t) => t.split('\n').filter(Boolean).map(l => { var f = l.split('\t'); return f[2] ? { item: f[0], why: f[1], ahead: true } : { item: f[0], why: f[1] }; });
-      // Drop whatever an untracked roll left behind, and file a tracked roll's discards.
-      var rsClear = () => { if (rsHist) inst.takeResamples(); };
+      // Trail lines: "item\twhy" (a discarded roll), "item\twhy\t+" (lookahead), and for a
+      // stream-grid request "G\t<stream key>" then "g\t<resample index>\titem\twhy".
+      var rsParse = (t) => t.split('\n').filter(Boolean).map(l => {
+        var f = l.split('\t');
+        if (f[0] == 'G') return { gridKey: f[1] };
+        if (f[0] == 'g') return { grid: true, r: parseInt(f[1], 10), item: f[2], why: f[3] };
+        return f[2] ? { item: f[0], why: f[1], ahead: true } : { item: f[0], why: f[1] };
+      });
+      // Before a tracked roll: drop whatever an untracked roll left behind, and switch the
+      // stream grid on only for the requested card (or, for a pack, the pack holding it).
+      var rsArm = (key, isPrefix) => {
+        if (!rsHist) return;
+        inst.takeResamples();
+        if (rsGrid) { var hit = isPrefix ? rsGrid.key.startsWith(key) : rsGrid.key === key; inst.setResampleGrid(hit ? rsGrid.rows : 0, rsGrid.cols); }
+      };
       var rsTake = (key) => { if (!rsHist) return; var t = inst.takeResamples(); if (t) rsHist[key] = rsParse(t); };
       var rsTakePack = (a, pi) => {
         if (!rsHist) return;
@@ -1659,9 +1690,10 @@
           output += "Boss: " + resume.boss + "\n";
           if (resume.voucher) voucherList.push(resume.voucher);
         } else {
-          rsClear();
+          rsArm(a + ':boss');
           output += "Boss: " + inst.nextBoss(a) + "\n";
           rsTake(a + ':boss');
+          rsArm(a + ':voucher:0');
           voucherList.push(inst.nextVoucher(a));
           rsTake(a + ':voucher:0');
         }
@@ -1672,7 +1704,7 @@
         var extraV = extraVouchers[a] || 0;
         if (extraV > 0) {
           for (const name in voucherPurchases) { if (voucherPurchases[name] == a) inst.lock(name); }
-          for (let v = 0; v < extraV; v++) { rsClear(); voucherList.push(inst.nextVoucher(a)); rsTake(a + ':voucher:' + (voucherList.length - 1)); }
+          for (let v = 0; v < extraV; v++) { rsArm(a + ':voucher:' + voucherList.length); voucherList.push(inst.nextVoucher(a)); rsTake(a + ':voucher:' + (voucherList.length - 1)); }
         }
         output += "Voucher: " + voucherList.join(", ") + "\n";
         if (resumingAnte(a)) output += "Resumed from save: " + resume.label + "\n";
@@ -1707,7 +1739,7 @@
         if (heldNow.length > 0) output += "Owned Cards: " + heldNow.join(", ") + "\n";
         var tagList = [];
         var numTags = 2 + (extraTags[a] || 0);
-        var rollTag = () => { rsClear(); tagList.push(inst.nextTag(a)); rsTake(a + ':tag:' + (tagList.length - 1)); };
+        var rollTag = () => { rsArm(a + ':tag:' + tagList.length); tagList.push(inst.nextTag(a)); rsTake(a + ':tag:' + (tagList.length - 1)); };
         if (resumingAnte(a)) { tagList = resume.tags.slice(); for (let t = 2; t < numTags; t++) rollTag(); }
         else for (let t = 0; t < numTags; t++) rollTag();
         output += "Tags: " + tagList.join(", ") + "\n";
@@ -1717,7 +1749,7 @@
         var sixthSense = [];
         var numSixth = 3 * (1 + (extraSixth[a] || 0));
         for (let r = 0; r < numSixth; r++) {
-          rsClear();
+          rsArm(a + ':sixth:' + r);
           sixthSense.push(inst.nextSpectral("sixth", a, false));
           rsTake(a + ':sixth:' + r);
         }
@@ -1799,7 +1831,7 @@
             else inst.resetNode("Joker4");
           }
           for (let i = 0; i < g.count; i++) {
-            rsClear();
+            rsArm(a + ':gen:' + g.label + ':' + i);
             if (g.kind == "joker") {
               var jkr = inst.nextJoker(g.source, a, false);
               var name = "";
@@ -1886,7 +1918,7 @@
             if (q >= pendingHolds[h].fromSlot) { inst.hold(pendingHolds[h].name); pendingHolds.splice(h, 1); }
           }
           output += q + ") ";
-          rsClear();
+          rsArm(a + ':shop:' + (q - 1));
           var item = inst.nextShopItem(a);
           rsTake(a + ':shop:' + (q - 1));
           if (item.type == "Joker") {
@@ -1924,7 +1956,7 @@
         for (let p = 1; p <= numPacks; p++) {
           var pack = inst.nextPack(a);
           output += pack + " - ";
-          if (rsHist) { inst.takeResamples(); inst.takePackResamples().delete(); }
+          if (rsHist) { rsArm(a + ':pack:' + (packIndexBase + p - 1) + ':', true); inst.takePackResamples().delete(); }
           var packInfo = Immolate.packInfo(pack);
           var packType = packInfo.type;
           var packSize = packInfo.size;
@@ -2031,6 +2063,7 @@
 
       inst.delete();
 
+      if (rsGrid) rsGrid.result = rsHist[rsGrid.key] || null;
       // A hold test only wants the text; leave the page as it is.
       if (analysisQuiet) return output;
       window.resampleHistory = rsHist;
