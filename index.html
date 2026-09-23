@@ -1,9 +1,14 @@
 <!doctype html>
 <html>
   <script>
+    // A seed in the URL analyses on load, once both the wasm runtime is up and the URL has
+    // been read into the form (DOMContentLoaded). Either can finish first - a cached wasm
+    // often beats the DOM - so each side checks for the other and the later one runs it.
+    var runtimeReady = false;
     var Immolate = {
       onRuntimeInitialized: function() {
-        if (instantAnalysis) {
+        runtimeReady = true;
+        if (window.instantAnalysis) {
           performAnalysis();
         }
       }
@@ -1126,6 +1131,7 @@
         saveResume = { ante: ante, seed: seed, nodes: nodes, boss: boss, voucher: shopVoucher, voucherTaken: shopVoucher === '' && inShop, tags: tags, roundsDone: done, inShop: inShop,
           remainingRounds: remainingBlinds.map(x => x.r), remainingBlindNames: remainingBlinds.map(x => x.b),
           shopsRolled: shopsRolled, perkeoFirstShop: perkeoFirstShop, lockedBosses: lockedBosses, currentShop: currentShop,
+          mailRank: (G.current_round && G.current_round.mail_card && G.current_round.mail_card.rank) || null,
           label: file.name + ': seed ' + seed + ', ' + deckName + ', ' + stakeName + ', ante ' + ante + (inShop ? ', in the shop after the ' + (['Small', 'Big', 'Boss'][done - 1] || 'previous Boss') + ' Blind' : ', ' + (['Small', 'Big', 'Boss'][done] || 'next ante') + ' Blind next') };
 
         saveResumeState();
@@ -1825,14 +1831,35 @@
         var roundList = [];
         if (resumingAnte(a)) { roundList = resume.remainingRounds.slice(); for (let r = 4; r <= numRounds; r++) roundList.push(r); }
         else for (let r = 1; r <= numRounds; r++) roundList.push(r);
+        // Mail-In Rebate: reset_mail_rank() runs at run start and at the end of every round
+        // played (not on a skip), after the Boss has already eased the ante up. It picks
+        // pseudorandom_element(non-Stone playing cards, pseudoseed('mail' .. ante)), cards
+        // in sort_id order, so each round of ante a is the next pull of 'mail'+a, taken
+        // from the deck as the previous round ended (before that shop's additions).
+        var mailPrev = null;
         for (const r of roundList) {
+          var mail = null;
+          if (resumingAnte(a) && mailPrev === null) {
+            mail = resume.mailRank ? { rank: resume.mailRank, fromSave: true } : null;
+          } else {
+            var pa = a, pr = mailPrev === null ? r - 1 : mailPrev;
+            if (pr < 1 && a > 1) { pa = a - 1; pr = 3 + (extraRounds[a - 1] || 0); }
+            var mailDeck = (pr < 1 ? deckAt(startCards, 1, 0) : deckAt(startCards, pa, pr, a, r)).filter(c => !/\bStone\b/.test(c.name));
+            if (mailDeck.length == 0) mail = { rank: 'Ace', pool: 0 };
+            else {
+              var mailPick = mailDeck[Math.floor(inst.random("mail" + a) * mailDeck.length)];
+              mail = { rank: mailPick.name.split(' of ')[0].split(' ').pop(), pick: mailPick.name, pool: mailDeck.length };
+            }
+          }
+          mailPrev = r;
           var deckCards = deckAt(startCards, a, r);
           var perm = inst.nextShuffle(a, deckCards.length);
           var ordered = [];
           for (let i = 0; i < perm.size(); i++) ordered.push(deckCards[perm.get(i)]);
           perm.delete();
           if (!DRAW_FROM_END) ordered.reverse();
-          anteRounds.push({ round: r, hand: handSize, cards: ordered, blind: resumingAnte(a) && r <= 3 ? resume.remainingBlindNames[resume.remainingRounds.indexOf(r)] : null });
+          if (mail) mail.count = deckCards.filter(c => !/\bStone\b/.test(c.name) && c.name.split(' of ')[0].split(' ').pop() == mail.rank).length;
+          anteRounds.push({ round: r, hand: handSize, cards: ordered, mail: mail, blind: resumingAnte(a) && r <= 3 ? resume.remainingBlindNames[resume.remainingRounds.indexOf(r)] : null });
           output += "Round " + r + " [" + ordered.length + "]: " + ordered.map(c => c.name).join(", ") + "\n";
         }
         deckRounds[a] = anteRounds;
@@ -2205,6 +2232,8 @@
         // Truncate the seed if it's longer than 8 characters
         return filteredSeed.slice(0, 8);
       }
+
+      if (instantAnalysis && runtimeReady) performAnalysis();
     });
   </script>
 </html>

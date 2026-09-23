@@ -466,6 +466,34 @@ function searchAndHighlight() {
         width: 50px;
         margin-left: 4px;
     }
+    /* Mail-In Rebate rank, beside each round's title */
+    .mirNotice {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 6px;
+        margin-left: 10px;
+        padding: 2px 8px;
+        border: 1px solid rgba(255, 212, 121, 0.45);
+        border-radius: 3px;
+        background-color: rgba(255, 212, 121, 0.08);
+        color: #cccccc;
+        font-size: 11px;
+        vertical-align: middle;
+        cursor: help;
+    }
+    .mirNotice b {
+        color: #ffd479;
+        font-size: 12px;
+    }
+    .mirTag {
+        color: #aaaaaa;
+        text-transform: uppercase;
+        font-size: 9px;
+        letter-spacing: 0.4px;
+    }
+    .mirCount {
+        color: #999999;
+    }
     .deckNote {
         font-size: 11px;
         margin-bottom: 6px;
@@ -3103,7 +3131,7 @@ function searchAndHighlight() {
                     anteRounds.forEach((rd, ri) => {
                         const r = rd.round || (ri + 1);
                         const roundLabel = 'Round ' + r + (rd.blind ? ' / ' + rd.blind + ' Blind' : '') + ' (' + rd.cards.length + ' cards, hand ' + rd.hand + ')';
-                        createCollapsible(body, title + ':deck:' + r, roundLabel, (rb) => {
+                        const roundBody = createCollapsible(body, title + ':deck:' + r, roundLabel, (rb) => {
                             const scroll = document.createElement('div');
                             scroll.className = 'scrollable no-select';
                             // A card destroyed during round r is gone from the next round on.
@@ -3121,6 +3149,27 @@ function searchAndHighlight() {
                             rb.appendChild(scroll);
                             attachDragScroll(scroll);
                         }, null, true);
+                        // Mail-In Rebate notice in the free space right of the round's title.
+                        if (rd.mail) {
+                            const m = rd.mail;
+                            const mir = document.createElement('span');
+                            mir.className = 'mirNotice';
+                            const tag = document.createElement('span');
+                            tag.className = 'mirTag';
+                            tag.textContent = 'Mail-In Rebate';
+                            const rank = document.createElement('b');
+                            rank.textContent = m.rank;
+                            const cnt = document.createElement('span');
+                            cnt.className = 'mirCount';
+                            cnt.textContent = m.count + ' in deck \u00B7 $' + (5 * m.count) + ' if all discarded';
+                            mir.append(tag, rank, cnt);
+                            mir.title = m.fromSave
+                                ? 'Rank for this round, read from the save.'
+                                : m.pool === 0
+                                    ? 'No non-Stone cards when the round was set up, so the game defaults to Ace.'
+                                    : 'Rolled from ' + m.pick + ' (one of ' + m.pool + ' non-Stone cards) as the previous round ended. Assumes every blind is played: a skipped blind does not reroll the rank. $5 per discarded ' + m.rank + '.';
+                            roundBody.previousSibling.after(mir);
+                        }
                     });
                 }, 'generatorGroupTitle');
             }
