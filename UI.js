@@ -1384,6 +1384,38 @@ function searchAndHighlight() {
 .rsWhy.l { background-color: rgba(170, 170, 170, 0.2); color: #cccccc; }
 .rsWhy.r { background-color: rgba(122, 162, 255, 0.2); color: #a9c1ff; }
 .rsWhy.k { background-color: rgba(150, 237, 121, 0.2); color: #96ed79; }
+.rsWhy.n { background-color: rgba(122, 162, 255, 0.2); color: #a9c1ff; }
+.rsBadge.aheadOnly {
+    border-color: #6f86c4;
+    background-color: rgba(30, 30, 30, 0.85);
+    color: #a9c1ff;
+}
+.rsBadge.aheadOnly:hover, .rsBadge.aheadOnly:focus-visible, .rsBadge.aheadOnly.open {
+    background-color: #6f86c4;
+    color: #1e1e1e;
+}
+.rsAheadSep {
+    flex-shrink: 0;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    margin: 0 6px;
+    padding: 0 6px;
+    border-left: 1px dashed #6f86c4;
+    color: #a9c1ff;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+}
+.rsStep.ahead .rsThumb {
+    outline: 1px dashed #6f86c4;
+    outline-offset: 1px;
+}
+.rsStep.aheadNext .rsThumb {
+    opacity: 0.9;
+}
 .rsArrow {
     flex-shrink: 0;
     align-self: flex-start;
@@ -4034,6 +4066,7 @@ function searchAndHighlight() {
         h: { label: 'Held', title: 'Already held (or earlier in the same pack), so the game rerolled' },
         l: { label: 'Locked', title: 'Not in the pool: not unlocked, gated by ante, already bought, or extinct' },
         r: { label: 'Retry', title: 'The pool\u2019s placeholder slot, which always rerolls' },
+        n: { label: 'Next', title: 'What you would get here if the kept card (and each Next before this) were already held' },
     };
     let rsOpen = null;
     function closeResamplePop() {
@@ -4080,7 +4113,7 @@ function searchAndHighlight() {
         step.appendChild(why);
         return step;
     }
-    function openResamplePop(badge, history, finalName, finalSprite, kind, context) {
+    function openResamplePop(badge, rerolls, ahead, finalName, finalSprite, kind, context) {
         const pop = document.createElement('div');
         pop.className = 'rsPop';
         pop.setAttribute('role', 'dialog');
@@ -4092,14 +4125,15 @@ function searchAndHighlight() {
         t.textContent = 'Resample history';
         const sub = document.createElement('div');
         sub.className = 'rsPopSub';
-        sub.textContent = context + ' \u00B7 ' + history.length + ' reroll' + (history.length === 1 ? '' : 's');
+        sub.textContent = context + ' \u00B7 ' + rerolls.length + ' reroll' + (rerolls.length === 1 ? '' : 's')
+            + (ahead.length > 0 ? ' + ' + ahead.length + ' lookahead' : '');
         head.appendChild(t);
         head.appendChild(sub);
         pop.appendChild(head);
 
         const chain = document.createElement('div');
         chain.className = 'rsChain';
-        history.forEach((h, i) => {
+        rerolls.forEach((h, i) => {
             const why = RS_WHY[h.why] || RS_WHY.h;
             chain.appendChild(resampleStep(resampleThumb(h.item, kind), h.item, h.why in RS_WHY ? h.why : 'h', why.label, why.title, i + 1));
             const arrow = document.createElement('div');
@@ -4111,7 +4145,27 @@ function searchAndHighlight() {
         keptThumb.className = 'rsThumb' + (kind === 'tag' || kind === 'boss' ? ' small' : '');
         if (finalSprite) keptThumb.appendChild(finalSprite.cloneNode(true));
         else { keptThumb.classList.add('text'); keptThumb.textContent = finalName; }
-        chain.appendChild(resampleStep(keptThumb, finalName, 'k', 'Kept', 'the roll that stuck', history.length + 1));
+        chain.appendChild(resampleStep(keptThumb, finalName, 'k', 'Kept', 'the roll that stuck', rerolls.length + 1));
+        if (ahead.length > 0) {
+            const sep = document.createElement('div');
+            sep.className = 'rsAheadSep';
+            sep.textContent = 'if held';
+            sep.title = 'Lookahead: the rolls the game would make next on this stream. Peeked only; nothing in the queues moves.';
+            chain.appendChild(sep);
+            ahead.forEach((h, i) => {
+                if (i > 0) {
+                    const arrow = document.createElement('div');
+                    arrow.className = 'rsArrow';
+                    arrow.textContent = '\u2192';
+                    chain.appendChild(arrow);
+                }
+                const key = h.why in RS_WHY ? h.why : 'h';
+                const step = resampleStep(resampleThumb(h.item, kind), h.item, key, RS_WHY[key].label, RS_WHY[key].title, rerolls.length + 2 + i);
+                step.classList.remove('kept', 'rejected');
+                step.classList.add('ahead', key === 'n' ? 'aheadNext' : 'rejected');
+                chain.appendChild(step);
+            });
+        }
         pop.appendChild(chain);
 
         document.body.appendChild(pop);
@@ -4130,6 +4184,10 @@ function searchAndHighlight() {
     function attachResampleBadge(tile, key, finalName, kind, context) {
         const history = window.resampleHistory && window.resampleHistory[key];
         if (!history || history.length === 0) return;
+        // Entries before the kept marker are real rerolls; "ahead" ones are lookahead peeks.
+        const rerolls = history.filter(h => !h.ahead && h.why !== 'k');
+        const ahead = history.filter(h => h.ahead);
+        if (rerolls.length === 0 && ahead.length === 0) return;
         const sprite = tile.querySelector('.sprite');
         if (!sprite) return;
         const holder = document.createElement('div');
@@ -4139,10 +4197,14 @@ function searchAndHighlight() {
         holder.appendChild(sprite);
         const badge = document.createElement('button');
         badge.type = 'button';
-        badge.className = 'rsBadge';
-        badge.textContent = '\u21BB' + history.length;
-        badge.title = 'Rerolled ' + history.length + '\u00D7 before landing on ' + finalName + ': '
-            + history.map(h => h.item === 'RETRY' ? 'placeholder' : h.item).join(' \u2192 ') + '. Click for details.';
+        badge.className = 'rsBadge' + (rerolls.length === 0 ? ' aheadOnly' : '');
+        badge.textContent = rerolls.length > 0 ? '\u21BB' + rerolls.length : '\u00BB' + ahead.length;
+        const nameOf = h => h.item === 'RETRY' ? 'placeholder' : h.item;
+        const nexts = ahead.filter(h => h.why === 'n').map(nameOf);
+        badge.title = (rerolls.length > 0
+            ? 'Rerolled ' + rerolls.length + '\u00D7 before landing on ' + finalName + ': ' + rerolls.map(nameOf).join(' \u2192 ') + '.'
+            : 'First roll stuck: ' + finalName + '.')
+            + (nexts.length > 0 ? ' If held, next: ' + nexts.join(' \u2192 ') + '.' : '') + ' Click for details.';
         badge.setAttribute('aria-haspopup', 'dialog');
         badge.setAttribute('aria-expanded', 'false');
         badge.addEventListener('mousedown', (e) => e.stopPropagation());
@@ -4150,7 +4212,7 @@ function searchAndHighlight() {
             e.stopPropagation();
             const wasOpen = rsOpen && rsOpen.badge === badge;
             closeResamplePop();
-            if (!wasOpen) openResamplePop(badge, history, finalName, sprite, kind, context);
+            if (!wasOpen) openResamplePop(badge, rerolls, ahead, finalName, sprite, kind, context);
         });
         holder.appendChild(badge);
     }

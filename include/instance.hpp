@@ -1,6 +1,7 @@
 #include <map>
 #include <iomanip>
 #include <string>
+#include <algorithm>
 #pragma once
 
 struct Cache {
@@ -46,7 +47,12 @@ struct Instance {
     // roll it throws away to resampleTrail as "item\treason\n" (reason: h held, l locked,
     // r the pool's RETRY placeholder). Pack generators cut the trail per card into
     // packResamples, since they roll several cards in one call.
+    // With a lookahead of N, each roll also records the kept item ("item\tk\n") and then,
+    // until the chain has N+1 rolls, the rolls the game would make next if the kept item
+    // (and each valid pick after it) were held: "item\treason\t+\n", reason n for a roll
+    // that would be accepted. Lookahead only peeks at the resample streams, never advances them.
     bool recordResamples = false;
+    int resampleLookahead = 0;
     std::string resampleTrail;
     std::vector<std::string> packResamples;
     LuaRandom rng;
@@ -57,6 +63,9 @@ struct Instance {
         rng = LuaRandom(0);
         cache.generatedFirstPack = false;
     };
+    void setResampleLookahead(int n) {
+        resampleLookahead = n < 0 ? 0 : (n > 50 ? 50 : n);
+    }
     void setRecordResamples(bool on) {
         recordResamples = on;
         resampleTrail.clear();
@@ -82,6 +91,30 @@ struct Instance {
         resampleTrail += '\t';
         resampleTrail += reason;
         resampleTrail += '\n';
+    }
+    // The value get_node(ID) would return next, without storing it.
+    double peekNextNode(const std::string& ID) {
+        double v = cache.nodes.count(ID) ? cache.nodes[ID] : pseudohash(ID+seed);
+        v = round13(std::fmod(v*1.72431234+2.134453429141,1));
+        return (v + hashedSeed)/2;
+    }
+    void noteLookahead(const std::string& ID, const std::vector<std::string>& items, const std::string& kept, int rolls) {
+        resampleTrail += kept;
+        resampleTrail += "\tk\n";
+        std::vector<std::string> taken = {kept};
+        for (int r = rolls + 1; r <= resampleLookahead + 1; r++) {
+            LuaRandom peek(peekNextNode(ID+"_resample"+std::to_string(r)));
+            std::string item = items[peek.randint(0, items.size()-1)];
+            char reason = 'n';
+            if (item == "RETRY") reason = 'r';
+            else if (isLocked(item)) reason = 'l';
+            else if (!params.showman && (isHeld(item) || std::count(taken.begin(), taken.end(), item) > 0)) reason = 'h';
+            if (reason == 'n') taken.push_back(item);
+            resampleTrail += item;
+            resampleTrail += '\t';
+            resampleTrail += reason;
+            resampleTrail += "\t+\n";
+        }
     }
     double get_node(std::string ID) {
         if (cache.nodes.count(ID) == 0) {
@@ -120,17 +153,20 @@ struct Instance {
     std::string randchoice(std::string ID, std::vector<std::string> items) {
         rng = LuaRandom(get_node(ID));
         std::string item = items[rng.randint(0, items.size()-1)];
+        int rolls = 1;
         if (isLocked(item) || (params.showman == false && isHeld(item)) || item == "RETRY") {
             noteResample(item);
             int resample = 2;
             while (true) {
                 rng = LuaRandom(get_node(ID+"_resample"+std::to_string(resample)));
-                std::string item = items[rng.randint(0, items.size()-1)];
+                item = items[rng.randint(0, items.size()-1)];
                 resample++;
-                if ((item != "RETRY" && !isLocked(item) && (params.showman || !isHeld(item))) || resample > 1000) return item;
+                rolls++;
+                if ((item != "RETRY" && !isLocked(item) && (params.showman || !isHeld(item))) || resample > 1000) break;
                 noteResample(item);
             }
         }
+        if (recordResamples && resampleLookahead > 0) noteLookahead(ID, items, item, rolls);
         return item;
     }
     std::string randweightedchoice(std::string ID, std::vector<WeightedItem> items) {

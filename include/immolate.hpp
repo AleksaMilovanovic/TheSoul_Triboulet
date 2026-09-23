@@ -30,6 +30,7 @@ EMSCRIPTEN_BINDINGS(Immolate) {
         .function("peekNode", &Instance::peekNode)
         .function("setNode", &Instance::setNode)
         .function("setRecordResamples", &Instance::setRecordResamples)
+        .function("setResampleLookahead", &Instance::setResampleLookahead)
         .function("takeResamples", &Instance::takeResamples)
         .function("takePackResamples", &Instance::takePackResamples)
         .property("params", &Instance::params)

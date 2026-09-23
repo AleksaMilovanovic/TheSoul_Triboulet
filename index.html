@@ -360,6 +360,9 @@
           <input type="checkbox" id="showResamples"> Show resample history
         </label>
         <br>
+        <label for="resampleLookahead" title="Show at least this many rerolls on every card: after the roll that stuck, the rolls the game would make next if that card (and each pick after it) were held. 0 = off. Peeks only; the queues do not change.">Resample lookahead:</label>
+        <input type="number" id="resampleLookahead" min="0" max="50" value="0">
+        <br>
         <button id="openCheckboxesBtn">Modify Unlocks</button>
         <button id="importSaveBtn" title="Load a Balatro save.jkr: fills seed, deck, stake, ante, owned Jokers and consumables, your current deck, and resumes every RNG stream from the save">Import Save (.jkr)</button>
         <input type="file" id="importSaveFile" accept=".jkr" style="display:none">
@@ -1209,6 +1212,9 @@
     // window.resampleHistory for UI.js. When off, nothing is recorded and nothing changes.
     var showResampleHistory = false;
     try { showResampleHistory = localStorage.getItem('theSoulShowResamples') === '1'; } catch (e) { /* page-only */ }
+    // Lookahead N: every card's chain runs to at least N+1 rolls, peeking past the kept one.
+    var resampleLookahead = 0;
+    try { resampleLookahead = Math.max(0, Math.min(50, parseInt(localStorage.getItem('theSoulResampleLookahead'), 10) || 0)); } catch (e) { /* page-only */ }
     var analysisQuiet = false;      // build the output string, write nothing to the page
     window.holdTest = {
       // That ante's shop queue as "N) Card" lines. `holds` are names (held for the whole
@@ -1506,6 +1512,14 @@
       try { localStorage.setItem('theSoulShowResamples', showResampleHistory ? '1' : '0'); } catch (e) { /* page-only */ }
       if (outputBox.value) performAnalysis();
     });
+    const lookaheadInput = document.getElementById('resampleLookahead');
+    lookaheadInput.value = resampleLookahead;
+    lookaheadInput.addEventListener('change', () => {
+      resampleLookahead = Math.max(0, Math.min(50, parseInt(lookaheadInput.value, 10) || 0));
+      lookaheadInput.value = resampleLookahead;
+      try { localStorage.setItem('theSoulResampleLookahead', String(resampleLookahead)); } catch (e) { /* page-only */ }
+      if (outputBox.value) performAnalysis();
+    });
 
     function performAnalysis() {
       // Get input values
@@ -1525,9 +1539,9 @@
 
       // It's analysis time!
       var inst = new Immolate.Instance(seed);
-      var rsHist = (showResampleHistory && !analysisQuiet) ? {} : null;
-      if (rsHist) inst.setRecordResamples(true);
-      var rsParse = (t) => t.split('\n').filter(Boolean).map(l => { var f = l.split('\t'); return { item: f[0], why: f[1] }; });
+      var rsHist = ((showResampleHistory || resampleLookahead > 0) && !analysisQuiet) ? {} : null;
+      if (rsHist) { inst.setResampleLookahead(resampleLookahead); inst.setRecordResamples(true); }
+      var rsParse = (t) => t.split('\n').filter(Boolean).map(l => { var f = l.split('\t'); return f[2] ? { item: f[0], why: f[1], ahead: true } : { item: f[0], why: f[1] }; });
       // Drop whatever an untracked roll left behind, and file a tracked roll's discards.
       var rsClear = () => { if (rsHist) inst.takeResamples(); };
       var rsTake = (key) => { if (!rsHist) return; var t = inst.takeResamples(); if (t) rsHist[key] = rsParse(t); };

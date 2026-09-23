@@ -371,7 +371,13 @@ Card Instance::nextStandardCard(int ante) {
     // Enhancement
     std::string enhancement;
     if (random("stdset"+anteStr) <= 0.6) enhancement = "No Enhancement";
-    else enhancement = randchoice("Enhancedsta"+anteStr, ENHANCEMENTS);
+    else {
+        // Keep the enhancement roll out of the resample trail: the card's chain is its base.
+        bool recording = recordResamples;
+        recordResamples = false;
+        enhancement = randchoice("Enhancedsta"+anteStr, ENHANCEMENTS);
+        recordResamples = recording;
+    }
 
     // Base
     std::string base = randchoice("frontsta"+anteStr, CARDS);
