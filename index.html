@@ -67,6 +67,20 @@
       font-size: 1.2em;
     }
 
+    .checkLabel {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin: 6px 0;
+      cursor: pointer;
+    }
+    .checkLabel input {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      accent-color: #006025;
+    }
+
     .container {
       display: flex;
       justify-content: space-around;
@@ -341,6 +355,10 @@
           <option value="10014">1.0.0n</option>
           <!-- Add version options here -->
         </select>
+        <br>
+        <label class="checkLabel" for="showResamples" title="Mark cards whose roll was thrown away because the first pick was held or locked; click the mark to see every discarded roll in order">
+          <input type="checkbox" id="showResamples"> Show resample history
+        </label>
         <br>
         <button id="openCheckboxesBtn">Modify Unlocks</button>
         <button id="importSaveBtn" title="Load a Balatro save.jkr: fills seed, deck, stake, ante, owned Jokers and consumables, your current deck, and resumes every RNG stream from the save">Import Save (.jkr)</button>
@@ -1185,6 +1203,12 @@
     // frame is rolled in one go when you walk in or reroll, so a card bought out of frame F
     // is still in the pool for every card of frame F and only drops out from frame F+1.
     var analysisTempHolds = null;   // { ante, holds: [{ name, fromSlot }] }
+    // Resample history (a viewer preference kept in localStorage, not in the share link).
+    // When on, the engine records every roll randchoice() threw away, keyed like the UI's
+    // seen marks ("ante:shop:i", "ante:pack:p:c", ...), and publishes it on
+    // window.resampleHistory for UI.js. When off, nothing is recorded and nothing changes.
+    var showResampleHistory = false;
+    try { showResampleHistory = localStorage.getItem('theSoulShowResamples') === '1'; } catch (e) { /* page-only */ }
     var analysisQuiet = false;      // build the output string, write nothing to the page
     window.holdTest = {
       // That ante's shop queue as "N) Card" lines. `holds` are names (held for the whole
@@ -1475,6 +1499,14 @@
     // Add event listener to the "Analysis" button
     analyzeButton.addEventListener('click', performAnalysis);
 
+    const showResamplesBox = document.getElementById('showResamples');
+    showResamplesBox.checked = showResampleHistory;
+    showResamplesBox.addEventListener('change', () => {
+      showResampleHistory = showResamplesBox.checked;
+      try { localStorage.setItem('theSoulShowResamples', showResampleHistory ? '1' : '0'); } catch (e) { /* page-only */ }
+      if (outputBox.value) performAnalysis();
+    });
+
     function performAnalysis() {
       // Get input values
       const ante = parseInt(anteInput.value, 10);
@@ -1493,6 +1525,18 @@
 
       // It's analysis time!
       var inst = new Immolate.Instance(seed);
+      var rsHist = (showResampleHistory && !analysisQuiet) ? {} : null;
+      if (rsHist) inst.setRecordResamples(true);
+      var rsParse = (t) => t.split('\n').filter(Boolean).map(l => { var f = l.split('\t'); return { item: f[0], why: f[1] }; });
+      // Drop whatever an untracked roll left behind, and file a tracked roll's discards.
+      var rsClear = () => { if (rsHist) inst.takeResamples(); };
+      var rsTake = (key) => { if (!rsHist) return; var t = inst.takeResamples(); if (t) rsHist[key] = rsParse(t); };
+      var rsTakePack = (a, pi) => {
+        if (!rsHist) return;
+        var v = inst.takePackResamples();
+        for (let c = 0; c < v.size(); c++) { var t = v.get(c); if (t) rsHist[a + ':pack:' + pi + ':' + c] = rsParse(t); }
+        v.delete();
+      };
       // Every embind object handed back to JS owns a wasm heap allocation and must be
       // .delete()d, including nested ones returned by property reads (jokerData,
       // stickers). Leaking them exhausts the fixed-size wasm heap after ~10 analyses.
@@ -1595,8 +1639,11 @@
           output += "Boss: " + resume.boss + "\n";
           if (resume.voucher) voucherList.push(resume.voucher);
         } else {
+          rsClear();
           output += "Boss: " + inst.nextBoss(a) + "\n";
+          rsTake(a + ':boss');
           voucherList.push(inst.nextVoucher(a));
+          rsTake(a + ':voucher:0');
         }
         // Replaying this ante (Hieroglyph / Petroglyph drop the ante, then its Boss is beaten
         // again) rolls the voucher once more from the same per-ante stream. Anything bought in
@@ -1605,7 +1652,7 @@
         var extraV = extraVouchers[a] || 0;
         if (extraV > 0) {
           for (const name in voucherPurchases) { if (voucherPurchases[name] == a) inst.lock(name); }
-          for (let v = 0; v < extraV; v++) voucherList.push(inst.nextVoucher(a));
+          for (let v = 0; v < extraV; v++) { rsClear(); voucherList.push(inst.nextVoucher(a)); rsTake(a + ':voucher:' + (voucherList.length - 1)); }
         }
         output += "Voucher: " + voucherList.join(", ") + "\n";
         if (resumingAnte(a)) output += "Resumed from save: " + resume.label + "\n";
@@ -1640,8 +1687,9 @@
         if (heldNow.length > 0) output += "Owned Cards: " + heldNow.join(", ") + "\n";
         var tagList = [];
         var numTags = 2 + (extraTags[a] || 0);
-        if (resumingAnte(a)) { tagList = resume.tags.slice(); for (let t = 2; t < numTags; t++) tagList.push(inst.nextTag(a)); }
-        else for (let t = 0; t < numTags; t++) tagList.push(inst.nextTag(a));
+        var rollTag = () => { rsClear(); tagList.push(inst.nextTag(a)); rsTake(a + ':tag:' + (tagList.length - 1)); };
+        if (resumingAnte(a)) { tagList = resume.tags.slice(); for (let t = 2; t < numTags; t++) rollTag(); }
+        else for (let t = 0; t < numTags; t++) rollTag();
         output += "Tags: " + tagList.join(", ") + "\n";
 
         // Sixth Sense: one Spectral per trigger, at most once per round (first hand a lone 6), so 3 per ante. Uses the
@@ -1649,7 +1697,9 @@
         var sixthSense = [];
         var numSixth = 3 * (1 + (extraSixth[a] || 0));
         for (let r = 0; r < numSixth; r++) {
+          rsClear();
           sixthSense.push(inst.nextSpectral("sixth", a, false));
+          rsTake(a + ':sixth:' + r);
         }
         output += "Sixth Sense: " + sixthSense.join(", ") + "\n";
 
@@ -1729,6 +1779,7 @@
             else inst.resetNode("Joker4");
           }
           for (let i = 0; i < g.count; i++) {
+            rsClear();
             if (g.kind == "joker") {
               var jkr = inst.nextJoker(g.source, a, false);
               var name = "";
@@ -1743,6 +1794,7 @@
             } else if (g.kind == "planet") {
               cards.push(inst.nextPlanet(g.source, a, false));
             }
+            rsTake(a + ':gen:' + g.label + ':' + i);
           }
           output += g.label + ": " + cards.join(", ") + "\n";
         });
@@ -1793,7 +1845,9 @@
             if (q >= pendingHolds[h].fromSlot) { inst.hold(pendingHolds[h].name); pendingHolds.splice(h, 1); }
           }
           output += q + ") ";
+          rsClear();
           var item = inst.nextShopItem(a);
+          rsTake(a + ':shop:' + (q - 1));
           if (item.type == "Joker") {
             var jokerData = item.jokerData;
             var stickers = jokerData.stickers;
@@ -1829,6 +1883,7 @@
         for (let p = 1; p <= numPacks; p++) {
           var pack = inst.nextPack(a);
           output += pack + " - ";
+          if (rsHist) { inst.takeResamples(); inst.takePackResamples().delete(); }
           var packInfo = Immolate.packInfo(pack);
           var packType = packInfo.type;
           var packSize = packInfo.size;
@@ -1912,6 +1967,7 @@
             }
             cards.delete();
           }
+          rsTakePack(a, packIndexBase + p - 1);
           output += "\n";
         }
         // The hand goes back to the bottom of the deck when the pack closes, so a second pack
@@ -1936,6 +1992,7 @@
 
       // A hold test only wants the text; leave the page as it is.
       if (analysisQuiet) return output;
+      window.resampleHistory = rsHist;
 
       var statusEl = document.getElementById('importSaveStatus');
       if (resume && !statusEl.textContent.startsWith('Imported')) {

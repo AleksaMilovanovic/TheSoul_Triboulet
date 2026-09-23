@@ -403,6 +403,7 @@ std::vector<std::string> Instance::nextArcanaPack(int size, int ante) {
         if (isVoucherActive("Omen Globe") && random("omen_globe") > 0.8) {
             pack.push_back(nextSpectral("ar2", ante, true));
         } else pack.push_back(nextTarot("ar1", ante, true));
+        cutPackResample();
         hold(pack[i]);
     }
     for (int i = 0; i < size; i++) release(pack[i]);
@@ -412,6 +413,7 @@ std::vector<std::string> Instance::nextCelestialPack(int size, int ante) {
     std::vector<std::string> pack;
     for (int i = 0; i < size; i++) {
         pack.push_back(nextPlanet("pl1", ante, true));
+        cutPackResample();
         hold(pack[i]);
     }
     for (int i = 0; i < size; i++) release(pack[i]);
@@ -421,6 +423,7 @@ std::vector<std::string> Instance::nextSpectralPack(int size, int ante) {
     std::vector<std::string> pack;
     for (int i = 0; i < size; i++) {
         pack.push_back(nextSpectral("spe", ante, true));
+        cutPackResample();
         hold(pack[i]);
     }
     for (int i = 0; i < size; i++) release(pack[i]);
@@ -430,6 +433,7 @@ std::vector<Card> Instance::nextStandardPack(int size, int ante) {
     std::vector<Card> pack;
     for (int i = 0; i < size; i++) {
         pack.push_back(nextStandardCard(ante));
+        cutPackResample();
     }
     return pack;
 }
@@ -437,6 +441,7 @@ std::vector<JokerData> Instance::nextBuffoonPack(int size, int ante) {
     std::vector<JokerData> pack;
     for (int i = 0; i < size; i++) {
         pack.push_back(nextJoker("buf", ante, true));
+        cutPackResample();
         hold(pack[i].joker);
     }
     for (int i = 0; i < size; i++) release(pack[i].joker);

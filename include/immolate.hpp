@@ -29,6 +29,9 @@ EMSCRIPTEN_BINDINGS(Immolate) {
         .function("resetNode", &Instance::resetNode)
         .function("peekNode", &Instance::peekNode)
         .function("setNode", &Instance::setNode)
+        .function("setRecordResamples", &Instance::setRecordResamples)
+        .function("takeResamples", &Instance::takeResamples)
+        .function("takePackResamples", &Instance::takePackResamples)
         .property("params", &Instance::params)
         .property("seed", &Instance::seed)
 

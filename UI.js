@@ -1241,6 +1241,156 @@ function searchAndHighlight() {
     color: #ffffff;
 }
 
+
+/* Resample history: a badge on any card whose first roll was thrown away, and the popover
+   it opens with every discarded roll in order. Only drawn with the setting on. */
+.rsSprite {
+    position: relative;
+    display: block;
+    margin: 0 auto !important;
+}
+.rsBadge {
+    position: absolute;
+    left: -6px;
+    bottom: 4px;
+    z-index: 2;
+    min-width: 20px;
+    height: 17px;
+    padding: 0 5px;
+    margin: 0 !important;
+    border: 1px solid #ffb13b;
+    border-radius: 9px;
+    background-color: #1e1e1e;
+    color: #ffcf7a;
+    font-family: inherit;
+    font-size: 10px;
+    line-height: 15px;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+    transition: transform 0.1s, background-color 0.1s;
+}
+.rsBadge:hover, .rsBadge:focus-visible, .rsBadge.open {
+    background-color: #ffb13b;
+    color: #1e1e1e;
+    transform: scale(1.1);
+    outline: none;
+}
+.rsPop {
+    position: fixed;
+    z-index: 1000;
+    max-width: calc(100vw - 32px);
+    padding: 10px 12px 12px;
+    border: 1px solid #555555;
+    border-top: 3px solid #ffb13b;
+    border-radius: 6px;
+    background-color: #262626;
+    color: #ffffff;
+    font-size: 11px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+    animation: rsPopIn 0.12s ease-out;
+}
+@keyframes rsPopIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: none; }
+}
+.rsPopHead {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+.rsPopTitle {
+    font-size: 13px;
+    color: #ffcf7a;
+}
+.rsPopSub {
+    color: #aaaaaa;
+}
+.rsChain {
+    display: flex;
+    align-items: flex-start;
+    gap: 4px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+}
+.rsStep {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex-shrink: 0;
+    width: 58px;
+    text-align: center;
+    line-height: 1.15;
+}
+.rsThumb {
+    position: relative;
+    width: 44px;
+    height: 59px;
+    margin-bottom: 4px;
+    overflow: hidden;
+    border-radius: 3px;
+}
+.rsThumb.small {
+    width: 34px;
+    height: 34px;
+    margin: 12px 0 17px;
+}
+.rsThumb > .sprite {
+    margin: 0 !important;
+    transform: scale(0.62);
+    transform-origin: top left;
+}
+.rsThumb.small > .sprite {
+    transform: none;
+}
+.rsThumb.text {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px dashed #666666;
+    font-size: 9px;
+    color: #cccccc;
+}
+.rsStep.rejected .rsThumb {
+    filter: grayscale(0.85) brightness(0.7);
+}
+.rsStep.rejected .rsThumb::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to top right, transparent calc(50% - 1px), #ff6b5e calc(50% - 1px), #ff6b5e calc(50% + 1px), transparent calc(50% + 1px));
+}
+.rsStep.kept .rsThumb {
+    outline: 2px solid #96ed79;
+    outline-offset: 1px;
+}
+.rsName {
+    font-size: 10px;
+    word-wrap: break-word;
+}
+.rsStep.rejected .rsName {
+    color: #bbbbbb;
+}
+.rsWhy {
+    margin-top: 2px;
+    padding: 0 4px;
+    border-radius: 3px;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+.rsWhy.h { background-color: rgba(255, 107, 94, 0.2); color: #ff9b91; }
+.rsWhy.l { background-color: rgba(170, 170, 170, 0.2); color: #cccccc; }
+.rsWhy.r { background-color: rgba(122, 162, 255, 0.2); color: #a9c1ff; }
+.rsWhy.k { background-color: rgba(150, 237, 121, 0.2); color: #96ed79; }
+.rsArrow {
+    flex-shrink: 0;
+    align-self: flex-start;
+    margin-top: 22px;
+    color: #777777;
+    font-size: 12px;
+}
 `;
     document.head.appendChild(style);
 
@@ -2200,6 +2350,7 @@ function searchAndHighlight() {
                 voucherNameElement.textContent = voucherName;
                 voucherNameElement.classList.add('voucherName');
                 voucherContainer.appendChild(voucherNameElement);
+                attachResampleBadge(voucherContainer, anteNum + ':voucher:' + idx, voucherName, 'voucher', 'Ante ' + anteNum + ' voucher' + (idx > 0 ? ', roll ' + (idx + 1) : ''));
 
                 // Anything past the first only shows up if this ante gets replayed.
                 if (idx > 0) {
@@ -2278,6 +2429,7 @@ function searchAndHighlight() {
                 bossNameElement.textContent = boss;
                 bossNameElement.classList.add('bossName');
                 bossContainer.appendChild(bossNameElement);
+                attachResampleBadge(bossContainer, anteNum + ':boss', boss, 'boss', 'Ante ' + anteNum + ' boss');
 
                 bossElement.appendChild(bossContainer);
             }
@@ -2302,6 +2454,7 @@ function searchAndHighlight() {
                 tagNameElement.textContent = tag;
                 tagNameElement.classList.add('tagName');
                 tagContainer.appendChild(tagNameElement);
+                attachResampleBadge(tagContainer, anteNum + ':tag:' + idx, tag, 'tag', 'Ante ' + anteNum + ' tag ' + (idx + 1));
 
                 tagsContainer.appendChild(tagContainer);
             });
@@ -2369,6 +2522,7 @@ function searchAndHighlight() {
                     if (idx % 3 === 0 && idx > 0) sixthContainer.classList.add('sixthSetStart');
                     roundElement.classList.add('modifier');
                     sixthContainer.appendChild(roundElement);
+                    attachResampleBadge(sixthContainer, anteNum + ':sixth:' + idx, cardName, 'card', 'Ante ' + anteNum + ' Sixth Sense, trigger ' + (idx + 1));
 
                     sixthCardsContainer.appendChild(sixthContainer);
                 });
@@ -3080,6 +3234,7 @@ function searchAndHighlight() {
                     upTo.title = 'Mark this card and everything left of it as seen and collapse them';
                     upTo.addEventListener('click', (e) => { e.stopPropagation(); markUpTo(idx); });
                     tile.appendChild(upTo);
+                    attachResampleBadge(tile, shopKey(idx), parseCardItem(item).cardName, 'card', 'Ante ' + anteNum + ' shop, card ' + (idx + 1));
                     tiles.push(tile);
                     scrollable.appendChild(tile);
                 });
@@ -3170,6 +3325,7 @@ function searchAndHighlight() {
                                 genTile.appendChild(makePosBadge(idx + 1));
                                 attachSeenToggle(genTile, anteNum + ':gen:' + label + ':' + idx);
                                 attachOwnToggle(genTile, parseCardItem(card).cardName, anteNum);
+                                attachResampleBadge(genTile, anteNum + ':gen:' + label + ':' + idx, parseCardItem(card).cardName, 'card', 'Ante ' + anteNum + ' ' + label + ' #' + (idx + 1));
                                 generatorScrollable.appendChild(genTile);
                                 genTiles.push(genTile);
                             });
@@ -3271,6 +3427,7 @@ function searchAndHighlight() {
                             }
                         }
 
+                        attachResampleBadge(cardContainer, anteNum + ':pack:' + pi + ':' + ci, itemType !== 'unknown' ? parsedCardName : getStandardCardName(cardName), 'card', 'Ante ' + anteNum + ' ' + packName + ', card ' + (ci + 1));
                         packItem.appendChild(cardContainer);
                     });
 
@@ -3867,6 +4024,135 @@ function searchAndHighlight() {
         void tile.offsetWidth;  // restart the flash when the same tile is picked twice
         tile.classList.add('jumpFlash');
         tile.addEventListener('animationend', () => tile.classList.remove('jumpFlash'), { once: true });
+    }
+
+    // ---- Resample history ---------------------------------------------------
+    // index.html fills window.resampleHistory (only with "Show resample history" on) with
+    // the rolls randchoice() discarded for each card, keyed like the seen marks. A card with
+    // any gets a small badge on its sprite; clicking it lists every roll in order.
+    const RS_WHY = {
+        h: { label: 'Held', title: 'Already held (or earlier in the same pack), so the game rerolled' },
+        l: { label: 'Locked', title: 'Not in the pool: not unlocked, gated by ante, already bought, or extinct' },
+        r: { label: 'Retry', title: 'The pool\u2019s placeholder slot, which always rerolls' },
+    };
+    let rsOpen = null;
+    function closeResamplePop() {
+        if (!rsOpen) return;
+        rsOpen.pop.remove();
+        rsOpen.badge.classList.remove('open');
+        rsOpen.badge.setAttribute('aria-expanded', 'false');
+        rsOpen = null;
+    }
+    document.addEventListener('mousedown', (e) => { if (rsOpen && !rsOpen.pop.contains(e.target) && e.target !== rsOpen.badge) closeResamplePop(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && rsOpen) { const b = rsOpen.badge; closeResamplePop(); b.focus(); } });
+    document.addEventListener('scroll', (e) => { if (rsOpen && !rsOpen.pop.contains(e.target)) closeResamplePop(); }, true);
+    window.addEventListener('resize', closeResamplePop);
+    document.addEventListener('analysisComplete', closeResamplePop);
+
+    function resampleThumb(name, kind) {
+        const box = document.createElement('div');
+        box.className = 'rsThumb';
+        if (kind === 'tag' || kind === 'boss') {
+            box.classList.add('small');
+            box.appendChild(kind === 'tag' ? makeTagSprite(name) : makeBossSprite(name));
+        } else if (kind === 'voucher') {
+            box.appendChild(makeVoucherSprite(name));
+        } else if (determineItemType(name) !== 'unknown') {
+            box.appendChild(makeCardSprite(name, determineItemType(name), [], []));
+        } else {
+            box.classList.add('text');
+            box.textContent = name === 'RETRY' ? '?' : name;
+        }
+        return box;
+    }
+    function resampleStep(thumb, name, whyKey, whyLabel, whyTitle, rollNo) {
+        const step = document.createElement('div');
+        step.className = 'rsStep ' + (whyKey === 'k' ? 'kept' : 'rejected');
+        step.title = 'Roll ' + rollNo + ': ' + name + ' \u2014 ' + whyTitle;
+        step.appendChild(thumb);
+        const nm = document.createElement('div');
+        nm.className = 'rsName';
+        nm.textContent = name === 'RETRY' ? 'Placeholder' : name;
+        step.appendChild(nm);
+        const why = document.createElement('div');
+        why.className = 'rsWhy ' + whyKey;
+        why.textContent = whyLabel;
+        step.appendChild(why);
+        return step;
+    }
+    function openResamplePop(badge, history, finalName, finalSprite, kind, context) {
+        const pop = document.createElement('div');
+        pop.className = 'rsPop';
+        pop.setAttribute('role', 'dialog');
+        pop.setAttribute('aria-label', 'Resample history for ' + finalName);
+        const head = document.createElement('div');
+        head.className = 'rsPopHead';
+        const t = document.createElement('div');
+        t.className = 'rsPopTitle';
+        t.textContent = 'Resample history';
+        const sub = document.createElement('div');
+        sub.className = 'rsPopSub';
+        sub.textContent = context + ' \u00B7 ' + history.length + ' reroll' + (history.length === 1 ? '' : 's');
+        head.appendChild(t);
+        head.appendChild(sub);
+        pop.appendChild(head);
+
+        const chain = document.createElement('div');
+        chain.className = 'rsChain';
+        history.forEach((h, i) => {
+            const why = RS_WHY[h.why] || RS_WHY.h;
+            chain.appendChild(resampleStep(resampleThumb(h.item, kind), h.item, h.why in RS_WHY ? h.why : 'h', why.label, why.title, i + 1));
+            const arrow = document.createElement('div');
+            arrow.className = 'rsArrow';
+            arrow.textContent = '\u2192';
+            chain.appendChild(arrow);
+        });
+        const keptThumb = document.createElement('div');
+        keptThumb.className = 'rsThumb' + (kind === 'tag' || kind === 'boss' ? ' small' : '');
+        if (finalSprite) keptThumb.appendChild(finalSprite.cloneNode(true));
+        else { keptThumb.classList.add('text'); keptThumb.textContent = finalName; }
+        chain.appendChild(resampleStep(keptThumb, finalName, 'k', 'Kept', 'the roll that stuck', history.length + 1));
+        pop.appendChild(chain);
+
+        document.body.appendChild(pop);
+        const r = badge.getBoundingClientRect();
+        const w = pop.offsetWidth, hgt = pop.offsetHeight;
+        let left = Math.min(Math.max(16, r.left - 8), window.innerWidth - w - 16);
+        let top = r.bottom + 6;
+        if (top + hgt > window.innerHeight - 8 && r.top - hgt - 6 > 8) top = r.top - hgt - 6;
+        pop.style.left = Math.max(16, left) + 'px';
+        pop.style.top = top + 'px';
+        badge.classList.add('open');
+        badge.setAttribute('aria-expanded', 'true');
+        rsOpen = { pop, badge };
+    }
+    // kind: 'card' (Joker / consumable / playing card), 'voucher', 'tag' or 'boss'.
+    function attachResampleBadge(tile, key, finalName, kind, context) {
+        const history = window.resampleHistory && window.resampleHistory[key];
+        if (!history || history.length === 0) return;
+        const sprite = tile.querySelector('.sprite');
+        if (!sprite) return;
+        const holder = document.createElement('div');
+        holder.className = 'rsSprite';
+        holder.style.width = sprite.style.width;
+        sprite.parentNode.insertBefore(holder, sprite);
+        holder.appendChild(sprite);
+        const badge = document.createElement('button');
+        badge.type = 'button';
+        badge.className = 'rsBadge';
+        badge.textContent = '\u21BB' + history.length;
+        badge.title = 'Rerolled ' + history.length + '\u00D7 before landing on ' + finalName + ': '
+            + history.map(h => h.item === 'RETRY' ? 'placeholder' : h.item).join(' \u2192 ') + '. Click for details.';
+        badge.setAttribute('aria-haspopup', 'dialog');
+        badge.setAttribute('aria-expanded', 'false');
+        badge.addEventListener('mousedown', (e) => e.stopPropagation());
+        badge.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const wasOpen = rsOpen && rsOpen.badge === badge;
+            closeResamplePop();
+            if (!wasOpen) openResamplePop(badge, history, finalName, sprite, kind, context);
+        });
+        holder.appendChild(badge);
     }
 
     function makePosBadge(pos, title) {

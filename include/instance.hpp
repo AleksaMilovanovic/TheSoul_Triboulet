@@ -42,6 +42,13 @@ struct Instance {
     double hashedSeed;
     Cache cache;
     InstParams params;
+    // Resample history, off unless the UI asks for it. While on, randchoice() appends every
+    // roll it throws away to resampleTrail as "item\treason\n" (reason: h held, l locked,
+    // r the pool's RETRY placeholder). Pack generators cut the trail per card into
+    // packResamples, since they roll several cards in one call.
+    bool recordResamples = false;
+    std::string resampleTrail;
+    std::vector<std::string> packResamples;
     LuaRandom rng;
     Instance(std::string s) {
         seed = s;
@@ -50,6 +57,32 @@ struct Instance {
         rng = LuaRandom(0);
         cache.generatedFirstPack = false;
     };
+    void setRecordResamples(bool on) {
+        recordResamples = on;
+        resampleTrail.clear();
+        packResamples.clear();
+    }
+    std::string takeResamples() {
+        std::string t;
+        t.swap(resampleTrail);
+        return t;
+    }
+    std::vector<std::string> takePackResamples() {
+        std::vector<std::string> v;
+        v.swap(packResamples);
+        return v;
+    }
+    void cutPackResample() {
+        if (recordResamples) packResamples.push_back(takeResamples());
+    }
+    void noteResample(const std::string& item) {
+        if (!recordResamples) return;
+        char reason = (item == "RETRY") ? 'r' : (isLocked(item) ? 'l' : 'h');
+        resampleTrail += item;
+        resampleTrail += '\t';
+        resampleTrail += reason;
+        resampleTrail += '\n';
+    }
     double get_node(std::string ID) {
         if (cache.nodes.count(ID) == 0) {
             cache.nodes[ID] = pseudohash(ID+seed);
@@ -88,12 +121,14 @@ struct Instance {
         rng = LuaRandom(get_node(ID));
         std::string item = items[rng.randint(0, items.size()-1)];
         if (isLocked(item) || (params.showman == false && isHeld(item)) || item == "RETRY") {
+            noteResample(item);
             int resample = 2;
             while (true) {
                 rng = LuaRandom(get_node(ID+"_resample"+std::to_string(resample)));
                 std::string item = items[rng.randint(0, items.size()-1)];
                 resample++;
                 if ((item != "RETRY" && !isLocked(item) && (params.showman || !isHeld(item))) || resample > 1000) return item;
+                noteResample(item);
             }
         }
         return item;
